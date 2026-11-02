@@ -1,0 +1,9 @@
+export type Project = { id: string; name: string; description: string; status: string; created_at: string; files?: string[]; artifacts?: Artifact[] }
+export type Artifact = { id: string; name: string; sha256: string }
+export type Task = { id: string; project_id: string; title: string; agent: string; status: string; attempts: number; iteration: number; error: string | null; result: Record<string, unknown>; dependencies: string[] }
+export type Message = { id: string; role: string; content: string; created_at: string }
+export type Agent = { id: string; name: string; role: string; model: string; tools: string[] }
+export type Event = { id: number; kind: string; message: string; created_at: string; project_id: string | null }
+export type Approval = { id: string; project_id: string; task_id: string; kind: string; status: string; details: { warning: string; hashes: Record<string, string>; command?: string[]; diffs?: Record<string,string>; source_directory?: string; execution_directory?: string } }
+export type Health = { ollama: { online: boolean; models: string[]; missing: string[]; error?: string }; active_task: string | null; mode: string; worker_enabled: boolean }
+export type Settings = { ollama_url: string; models: Record<string,string>; mode: string; timeout: number; max_tokens: number; context_size: number; temperature: number; max_attempts: number; max_iterations: number; llm_concurrency: number; internet_enabled: boolean; scheduler_enabled: boolean; schedule_minutes: number; daily_limit: number; max_active_tasks: number }
