@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Activity, ArrowDownToLine, ArrowRight, Bot, Boxes, Check, ChevronRight, Circle, FileCode2, Folder, LayoutDashboard, ListTodo, MessageSquare, Plus, Radio, RefreshCw, Send, Settings2, ShieldCheck, Sparkles, Terminal, X } from 'lucide-react'
 import { api } from './api'
+import { TaskEvidence } from './TaskEvidence'
 import type { Agent, Approval, Event, Health, Message, Project, Settings, Task } from './types'
 
 const navigation = [ ['Dashboard', LayoutDashboard], ['CEO Chat', MessageSquare], ['Projekty', Folder], ['Zadania', ListTodo], ['Agenci', Bot], ['Zatwierdzenia', ShieldCheck], ['Ustawienia', Settings2] ] as const
 const labels: Record<string,string> = { PENDING: 'W kolejce', RUNNING: 'W trakcie', COMPLETED: 'Zakończone', FAILED: 'Błąd', WAITING_APPROVAL: 'Wymaga zgody', CANCELLED: 'Anulowane', INTERRUPTED: 'Przerwane', IDLE: 'Gotowy', ACTIVE: 'Aktywny', APPROVED: 'Zatwierdzone', CONSUMED: 'Wykorzystane', REJECTED: 'Odrzucone', EXPIRED: 'Wygasłe' }
 const date = (s: string) => new Date(s).toLocaleString('pl-PL', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })
-function Badge({ status }: { status: string }) { return <span className={'badge ' + status.toLowerCase()}><Circle size={6} fill="currentColor" />{labels[status] || status}</span> }
+function Badge({ status }: { status: string }) { return <span className={'badge ' + status.toLowerCase()}><Circle size={6} fill="currentColor" />{status === 'REVIEWED' ? 'Przekazano do poprawek' : labels[status] || status}</span> }
 
 export default function App() {
   const [page, setPage] = useState('Dashboard')
@@ -32,11 +33,15 @@ export default function App() {
   const [agentFilter, setAgentFilter] = useState('')
   const end = useRef<HTMLDivElement>(null)
   const selectedRef = useRef(selected)
+  const refreshSequence = useRef(0)
   selectedRef.current = selected
 
   const refresh = useCallback(async () => {
+    const sequence = ++refreshSequence.current
+    const requestedProject = selectedRef.current
     try {
       const [p,t,a,g,e] = await Promise.all([api<Project[]>('/projects'), api<Task[]>('/tasks'), api<Approval[]>('/approvals'), api<Agent[]>('/agents'), api<Event[]>('/events')])
+      if (sequence !== refreshSequence.current || requestedProject !== selectedRef.current) return
       setProjects(p); setTasks(t); setApprovals(a); setAgents(g); setEvents(e)
       const id = selectedRef.current
       if (id && p.some(x => x.id === id)) {
@@ -64,7 +69,7 @@ export default function App() {
     setBusy(true); setError(''); setNotice('')
     try { await fn(); await refresh() } catch(e) { setError((e as Error).message) } finally { setBusy(false) }
   }
-  function selectProject(id: string, target = 'CEO Chat') { setSelected(id); setPage(target) }
+  function selectProject(id: string, target = 'CEO Chat') { selectedRef.current = id; setSelected(id); setPage(target) }
   const pending = approvals.filter(a => a.status === 'PENDING')
   const running = tasks.find(t => t.status === 'RUNNING')
   const projectTasks = tasks.filter(t => t.project_id === selected)
@@ -77,6 +82,7 @@ export default function App() {
     <div className={'avatar small ' + t.agent}>{t.agent.slice(0,2).toUpperCase()}</div>
     <div className="task-content"><div className="row"><strong>{t.title}</strong><Badge status={t.status}/></div><div className="muted">{t.agent} <span>·</span> próba {t.attempts} <span>·</span> poprawka {t.iteration}</div>
       {t.error && <p className="inline-error">{t.error}</p>}
+      <TaskEvidence task={t}/>
       {Object.keys(t.result).length > 0 && <details><summary>Rezultat etapu</summary><pre>{JSON.stringify(t.result,null,2)}</pre></details>}
       {t.dependencies.length > 0 && <small>Zależności: {t.dependencies.map(id => tasks.find(x => x.id === id)?.title || id.slice(0,8)).join(', ')}</small>}
     </div><div className="task-actions">

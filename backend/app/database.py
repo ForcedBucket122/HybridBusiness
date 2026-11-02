@@ -136,6 +136,15 @@ class SystemSetting(Base):
     value: Mapped[dict] = mapped_column(JSON)
 
 
+class TaskCheckpoint(Base):
+    """Additive table: existing projects/tasks need no destructive migration."""
+    __tablename__ = 'task_checkpoints'
+    task_id: Mapped[str] = mapped_column(ForeignKey('tasks.id'), primary_key=True)
+    stage: Mapped[str] = mapped_column(primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[str] = mapped_column(default=now)
+
+
 def connect(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     engine = create_engine(f'sqlite:///{path.as_posix()}', connect_args={'check_same_thread': False, 'timeout': 20})

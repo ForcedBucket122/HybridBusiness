@@ -87,7 +87,12 @@ async def test_changed_source_during_execution_blocks_release(system):
     await worker.tick();await worker.tick()
     with service.sessions() as s:
         assert s.scalar(select(Artifact)) is None
-        assert s.scalar(select(Task).where(Task.agent=='release')).status=='FAILED'
+        # The stricter gate now stops at QA before the release can be claimed.
+        assert s.scalar(select(Task).where(Task.agent=='release')).status=='PENDING'
+        qa=s.get(Task,approval.task_id)
+        assert qa.status=='FAILED' and qa.result['phase']=='post_tests'
+        assert qa.result['tests']['passed'] is True
+        assert qa.result['tested_hashes'] == approval.details['hashes']
 
 
 async def test_results_survive_failed_qa_inference(system):
@@ -132,7 +137,7 @@ def test_static_analysis_never_imports_code(system,tmp_path):
     assert result['kind']=='static_only'
 
 
-def test_coding_context_excludes_stale_verdicts_and_ends_with_current_task(system):
+def test_coding_context_excludes_stale_verdicts_and_contains_current_task(system):
     service,worker,http,runner=system
     p=service.create_project('Current evidence')
     service.enqueue(p.id,'Build console app','context-regression-request')
@@ -147,5 +152,6 @@ def test_coding_context_excludes_stale_verdicts_and_ends_with_current_task(syste
         context=worker.context(task,True)
         assert 'STALE_VERDICT' not in context
         assert 'tasks = []' in context
-        assert context.index('CURRENT TASK')>context.index('tasks = []')
+        import json
+        assert json.loads(context)['CurrentTask']['description'] == task.description
         assert task.description in context

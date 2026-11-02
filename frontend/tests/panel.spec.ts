@@ -1,7 +1,31 @@
 import { test, expect } from '@playwright/test'
 
+test('QA shows actual failure separately from review and loads persisted history', async ({page}) => {
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/stream')) return route.abort()
+    let data: unknown = []
+    if (path === '/api/health') data = {ollama:{online:true,models:[],missing:[]},mode:'HYBRID'}
+    if (path === '/api/tasks') data = [{id:'qa1',project_id:'p',title:'Weryfikacja',agent:'qa',status:'REVIEWED',attempts:1,iteration:1,error:null,dependencies:[],result:{
+      qa_report:{test_state:'failed',outcome:'changes_requested',issues:[{file:'main.py',line:23,kind:'AttributeError',message:'dict has no append',source:'runner'}]},
+      tests:{test_count:4,exit_code:1,passed:false,output:'FAILED (errors=3)'}
+    }}]
+    if (path.endsWith('/checkpoints')) data = [{stage:'tests_executed',updated_at:'2026-11-02T19:00:00Z',payload:{test_count:4}}]
+    if (path.endsWith('/runs')) data = [{id:'run1',status:'REVIEWED',started_at:'2026-11-02T19:00:00Z'}]
+    await route.fulfill({json:data})
+  })
+  await page.goto('/')
+  await page.getByRole('button',{name:'Zadania',exact:true}).click()
+  await expect(page.getByText('Testy: niezaliczone',{exact:true})).toBeVisible()
+  await expect(page.getByText('Przekazano do poprawek',{exact:true})).toBeVisible()
+  await page.getByText('Problemy QA (1)',{exact:true}).click()
+  await expect(page.getByText('main.py:23 · AttributeError')).toBeVisible()
+  await page.getByText('Historia prób i zapisane etapy',{exact:true}).click()
+  await expect(page.getByText(/tests_executed ·/)).toBeVisible()
+})
+
 test('dashboard, project creation, chat and task status use API data', async ({page}) => {
-  let projects: unknown[] = []
+  let projects: unknown[] = [{id:'old',name:'Previous project',status:'FAILED',description:'',created_at:new Date().toISOString()}]
   let messages: unknown[] = []
   let tasks: unknown[] = []
   await page.route('**/api/**', async route => {
@@ -31,6 +55,7 @@ test('dashboard, project creation, chat and task status use API data', async ({p
   await page.getByRole('button',{name:'Nowy projekt',exact:true}).click()
   await page.getByLabel('Nazwa projektu').fill('Browser project')
   await page.getByRole('button',{name:'Utwórz projekt',exact:true}).click()
+  await expect(page.getByLabel('Projekt rozmowy')).toHaveValue('a'.repeat(32))
   await page.getByLabel('Wiadomość do CEO').fill('Build the application')
   await page.getByRole('button',{name:'Wyślij',exact:true}).click()
   await expect(page.getByText('Build the application', {exact:true})).toBeVisible()

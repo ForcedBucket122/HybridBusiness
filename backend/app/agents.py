@@ -32,14 +32,18 @@ AGENTS = {
         'This MVP runs ONLY unittest, not pytest: use unittest even if the internal CEO plan mentions pytest. '
         'Initialize collections consistently: a list stays a list after loading JSON. Use TemporaryDirectory in tests. '
         'Keep total code under 300 lines when possible. On repair preserve working features and fix reported issues. '
-        'Paths are relative to the project. Include all necessary files. Never claim you ran tests.',
+        'Paths are relative to the project. Include all necessary files. Never claim you ran tests. '
+        'If RejectedProposal is present it was NOT written. Fix its concrete validation error before returning corrected files. '
+        'Ensure Python string literals are valid after JSON decoding; use simple separate print calls for CLI output.',
         ('list_files', 'read_file', 'write_file', 'create_directory', 'search_in_files', 'inspect_project', 'compare_changes'), CodeResult),
     'qa': AgentDefinition('qa', 'QA', 'Przegląd i weryfikacja',
         'Review code against the user requirements and static/test evidence. Identify concrete correctness errors only. '
         'Do not demand optional enhancements. acceptable means code review accepted, NOT tests passed. '
         'Trace each method against initial data types (e.g. dict has no append). Verify there is an actual CLI entry point '
         'when a console app was requested. Check that tests use isolated temporary storage and verify persistence. '
-        'If tests passed, assess their coverage honestly. Never pretend to execute anything.',
+        'If tests passed, assess their coverage honestly. Never pretend to execute anything. '
+        'Use findings for concrete issues: file, line, kind, message, expected, actual, suggestion. '
+        'Use null for unknown file/line. Do not invent observed test results; source is model.',
         ('list_files', 'read_file', 'inspect_project'), Review),
     'research': AgentDefinition('research', 'Research', 'Pomysły i wykonalność',
         'Generate and assess product ideas, audience, MVP scope and difficulty. No internet tools are available. '

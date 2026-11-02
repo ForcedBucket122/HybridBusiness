@@ -7,12 +7,16 @@ import zipfile
 
 from sqlalchemy import func, select
 
-from .agents import AGENTS
+from .agents import AGENTS, COMMON
+from .checkpoints import Checkpoints
+from .context import ContextBuilder
+from .evidence import qa_report
+from .repairs import materialize, validate_batch
 from .database import (AgentMessage, Approval, Artifact, ChatMessage, MemoryEntry, Project,
                        SystemSetting, Task, TaskRun, now, record, uid)
 from .memory import MemoryService
 from .runner import ApprovedHostRunner
-from .schemas import CodeResult
+from .schemas import CodeResult, RepairResult
 from .security import Workspace
 from .service import TERMINAL
 from .service import ACTIVE
@@ -28,6 +32,7 @@ class Orchestrator:
         self.stopping = False
         self.cancel_event = threading.Event()
         self.active_id = None
+        self.checkpoints = Checkpoints(self.sessions)
 
     def cancelled(self, task_id):
         if self.stopping or self.cancel_event.is_set():
@@ -51,7 +56,8 @@ class Orchestrator:
                     record(s, 'dependency_cancelled', task.error, task.project_id, task.id)
                     continue
                 # FAILED/INTERRUPTED dependencies remain blocked so an explicit retry can resume the plan.
-                if any(dep.status != 'COMPLETED' for dep in dependencies):
+                if any(dep.status != 'COMPLETED' and not (dep.status == 'REVIEWED' and task.agent == 'developer'
+                       and task.iteration > 0 and dep.result.get('repair_scheduled')) for dep in dependencies):
                     continue
                 if cfg.mode == 'MANUAL' and not task.manual_ready:
                     continue
@@ -79,14 +85,18 @@ class Orchestrator:
             task_id, run_id = claimed
             self.active_id = task_id
             self.cancel_event.clear()
+            if hasattr(self.client, 'metrics'):
+                self.client.metrics = []
             try:
-                result = await self.execute(task_id)
+                cfg = self.service.settings()
+                result = await asyncio.wait_for(self.execute(task_id), timeout=cfg.timeout * cfg.max_attempts + 150)
                 with self.sessions.begin() as s:
                     task, run = s.get(Task, task_id), s.get(TaskRun, run_id)
                     if self.cancelled(task_id):
                         task.status = 'INTERRUPTED' if self.stopping else 'CANCELLED'
                     elif task.status == 'RUNNING':
-                        task.status, task.result = 'COMPLETED', result
+                        task.status = 'REVIEWED' if result.get('repair_scheduled') else 'COMPLETED'
+                        task.result = result
                         s.add(AgentMessage(project_id=task.project_id, task_id=task.id, sender=task.agent, content=result))
                         MemoryService(s).save(task.project_id, f'{task.agent}: ' + json.dumps(result, ensure_ascii=False)[:12000])
                         s.add(ChatMessage(project_id=task.project_id, role=task.agent,
@@ -101,8 +111,13 @@ class Orchestrator:
                 self.fail(task_id, run_id, 'Zatrzymanie aplikacji.', 'INTERRUPTED')
                 raise
             except Exception as exc:
+                self.cancel_event.set()
                 self.fail(task_id, run_id, f'{type(exc).__name__}: {str(exc)[:1500]}')
             finally:
+                if getattr(self.client, 'metrics', None):
+                    with self.sessions() as s:
+                        completed_task = s.get(Task, task_id)
+                    self.checkpoints.save(completed_task, f'llm_metrics_attempt_{completed_task.attempts}', {'requests': self.client.metrics})
                 self.active_id = None
 
     def fail(self, task_id, run_id, error, status='FAILED'):
@@ -110,12 +125,18 @@ class Orchestrator:
             task, run = s.get(Task, task_id), s.get(TaskRun, run_id)
             task.status = 'CANCELLED' if task.cancel_requested else status
             task.error, task.finished_at = error, now()
+            if 'NO_PROGRESS' in error:
+                task.result = {**task.result, 'no_progress': True}
             run.status, run.error, run.finished_at = task.status, error, now()
             record(s, 'task_error', error, task.project_id, task.id)
             s.add(ChatMessage(project_id=task.project_id, role='system', content=f'{task.agent}: {error}'))
             self.service.refresh_project(s, task.project_id)
 
     def context(self, task, include_files=False):
+        if task.agent in ('developer', 'qa'):
+            context, metadata = ContextBuilder(self.service).build(task, include_files)
+            self.checkpoints.save(task, 'context', metadata)
+            return context
         with self.sessions() as s:
             project = s.get(Project, task.project_id)
             requests = list(s.scalars(select(ChatMessage).where(ChatMessage.project_id == task.project_id,
@@ -158,14 +179,19 @@ class Orchestrator:
         if task.agent == 'developer' and task.result.get('phase') == 'write':
             return self.write_code(task, ws, CodeResult.model_validate(task.result['proposed']), approved=True)
         if task.agent == 'qa':
+            reviewed_hashes = ws.hashes()
             with self.sessions.begin() as s:
                 static = ToolRegistry(ws, s, task, {}).call('inspect_project', {}, agent.tools)
             review = await agent.execute(self.client, self.context(task, True) + '\nStatic checks: ' + json.dumps(static))
             if self.cancelled(task.id):
                 return {'summary': 'Anulowano.'}
-            result = {'summary': review.summary, 'review': review.model_dump(), 'static': static}
-            if static['errors'] or not review.acceptable or review.issues:
-                return self.repair(task, result, static['errors'] + review.issues)
+            if reviewed_hashes != ws.hashes():
+                raise ValueError('Pliki zmieniły się podczas przeglądu QA. Nie utworzono zgody.')
+            report = qa_report(static=static, review=review, hashes=ws.hashes())
+            result = {'summary': review.summary, 'review': review.model_dump(), 'static': static, 'qa_report': report}
+            self.checkpoints.save(task, 'qa_review', result)
+            if report['outcome'] == 'changes_requested':
+                return self.repair(task, result, [i['message'] for i in report['issues']] or [review.summary])
             with self.sessions.begin() as s:
                 approval = Approval(project_id=task.project_id, task_id=task.id, kind='host_tests', details={
                     'hashes': ws.hashes(), 'command': self.runner.command, 'source_directory': str(ws.root),
@@ -178,6 +204,42 @@ class Orchestrator:
                 current.status, current.result = 'WAITING_APPROVAL', result
                 record(s, 'approval_required', 'QA zakończył analizę. Wymagana zgoda na wykonanie testów.', task.project_id, task.id)
             return result
+        if task.agent == 'developer':
+            proposal = self.checkpoints.get(task.id, 'proposal')
+            if proposal:
+                current = ws.hashes()
+                # Recovery permits already-written proposed files, but never unrelated edits.
+                target = {f['path']: hashlib.sha256(f['content'].encode()).hexdigest() for f in proposal['code']['files']}
+                if any(current.get(p) not in ([proposal['source_hashes'].get(p)] + ([target[p]] if p in target else []))
+                       for p in set(current) | set(proposal['source_hashes']) | set(target)):
+                    raise ValueError('Pliki zmieniły się od checkpointu. Wymagany nowy przegląd zadania.')
+                return self.write_code(task, ws, CodeResult.model_validate(proposal['code']), recovering=True)
+            before = ws.hashes()
+            context = self.context(task, True)
+            if task.iteration:
+                edits = await self.client.generate('developer', COMMON +
+                    'Repair the current files using exact old_text/new_text replacements. old_text must occur exactly once. '
+                    'To create a missing file only, use empty old_text and the full content as new_text. '
+                    'Fix ErrorSummary and RequiredChanges. Preserve regression tests and working features. '
+                    'Do not rewrite unrelated code. Never claim tests ran.', context, RepairResult)
+                if before != ws.hashes():
+                    raise ValueError('Pliki zmieniły się podczas generowania; nie zapisano poprawek.')
+                result = materialize(ws, edits)
+            else:
+                result = await agent.execute(self.client, context)
+            if self.cancelled(task.id):
+                return {'summary': 'Anulowano.'}
+            if before != ws.hashes():
+                raise ValueError('Pliki zmieniły się podczas generowania; nie zapisano odpowiedzi.')
+            try:
+                validate_batch(ws, result, repair=bool(task.iteration))
+            except (ValueError, SyntaxError) as exc:
+                self.checkpoints.save(task, 'rejected_proposal', {'code': result.model_dump(), 'written': False,
+                    'error': {'kind': type(exc).__name__, 'file': getattr(exc, 'filename', None),
+                              'line': getattr(exc, 'lineno', None), 'message': str(exc)}, 'source_hashes': before})
+                raise
+            self.checkpoints.save(task, 'proposal', {'code': result.model_dump(), 'source_hashes': before})
+            return self.write_code(task, ws, result)
         result = await agent.execute(self.client, self.context(task, task.agent in ('developer', 'release')))
         if self.cancelled(task.id):
             return {'summary': 'Anulowano.'}
@@ -238,7 +300,7 @@ class Orchestrator:
         else:
             s.add(SystemSetting(key=key, value=value))
 
-    def write_code(self, task, ws, result, approved=False):
+    def write_code(self, task, ws, result, approved=False, recovering=False):
         # Validate the whole batch before any write. Reject case-insensitive collisions on Windows.
         paths = [f.path for f in result.files]
         if len({p.replace('\\', '/').casefold() for p in paths}) != len(paths):
@@ -247,9 +309,16 @@ class Orchestrator:
             ws.path(f.path)
             if len(f.content.encode('utf-8')) > 100000:
                 raise ValueError('Plik jest za duży.')
+        diffs_all = validate_batch(ws, result, repair=bool(task.iteration) and not recovering and not approved)
+        before = ws.hashes()
         with self.sessions.begin() as s:
             owned = self.owned(s, task.project_id)
             hashes = ws.hashes()
+            if recovering:
+                # Only content exactly matching the durable proposal is recoverable as our write.
+                for f in result.files:
+                    if hashes.get(f.path) == hashlib.sha256(f.content.encode()).hexdigest():
+                        owned[f.path] = hashes[f.path]
             changes = [p for p in paths if p in hashes and hashes[p] != owned.get(p)]
             if changes and not approved:
                 registry = ToolRegistry(ws, s, task, owned)
@@ -270,10 +339,17 @@ class Orchestrator:
             registry = ToolRegistry(ws, s, task, owned)
             written = [registry.call('write_file', f.model_dump(), AGENTS['developer'].tools) for f in result.files]
             self.own(s, task.project_id, ws.hashes(), paths)
-        return {'summary': result.summary, 'files': written}
+            committed = {'summary': result.summary, 'files': written, 'changed_files': [p for p in paths if before.get(p) != ws.hashes().get(p)],
+                         'diffs': diffs_all, 'source_hashes': ws.hashes(), 'verification': 'files_written_and_syntax_checked; tests_not_run'}
+            s.get(Task, task.id).result = {'effects_committed': True, 'committed_result': committed}
+        self.checkpoints.save(task, 'files_written', committed)
+        return committed
 
     def repair(self, task, result, errors):
+        self.checkpoints.save(task, 'qa_result', result)
         if task.iteration >= self.service.settings().max_iterations:
+            with self.sessions.begin() as s:
+                s.get(Task, task.id).result = result
             raise ValueError('Wyczerpano limit poprawek: ' + '\n'.join(errors)[:3000])
         with self.sessions.begin() as s:
             dev = Task(id=uid(), project_id=task.project_id, agent='developer', title=f'Poprawki {task.iteration + 1}',
@@ -313,16 +389,26 @@ class Orchestrator:
             s.get(Approval, task.result['approval_id']).status = 'CONSUMED'
             s.get(Task, task.id).result = {'phase': 'post_tests', 'tests': evidence, 'tested_hashes': approved_hashes}
             record(s, 'tests_finished', f"exit={evidence['exit_code']}, tests={evidence['test_count']}", task.project_id, task.id)
+            MemoryService(s).remember(task.project_id, 'test_result', {'passed': evidence['passed'],
+                'test_count': evidence['test_count'], 'hashes': approved_hashes}, task.id, verified=True)
+        self.checkpoints.save(task, 'tests_executed', {'tests': evidence, 'tested_hashes': approved_hashes})
         if self.cancelled(task.id):
             return {'summary': 'Testy anulowane.', 'tests': evidence}
         return await self.review_tests(task, evidence, approved_hashes)
 
     async def review_tests(self, task, evidence, approved_hashes):
-        review = await AGENTS['qa'].execute(self.client, self.context(task, True) + '\nActual test evidence:\n' + json.dumps(evidence)[:12000])
+        if self.service.project_workspace(task.project_id).hashes() != approved_hashes:
+            raise ValueError('Bieżące pliki nie odpowiadają wykonanym testom. Wynik testów zachowano; potrzebny nowy przegląd.')
+        review = await AGENTS['qa'].execute(self.client, self.context(task, True))
+        report = qa_report(review=review, tests=evidence, hashes=approved_hashes)
         result = {'summary': review.summary, 'tests': evidence, 'review': review.model_dump(),
-                  'tested_hashes': approved_hashes}
-        if not evidence['passed'] or not review.acceptable or review.issues:
-            return self.repair(task, result, [evidence['output'][-10000:]] + review.issues)
+                  'tested_hashes': approved_hashes, 'qa_report': report}
+        if report['outcome'] == 'changes_requested':
+            return self.repair(task, result, [evidence['output'][-10000:]] + [i['message'] for i in report['issues']])
+        self.checkpoints.save(task, 'qa_result', result)
+        with self.sessions.begin() as s:
+            MemoryService(s).remember(task.project_id, 'solution', {'summary': review.summary,
+                'tested_hashes': approved_hashes, 'test_count': evidence['test_count']}, task.id, verified=True)
         return result
 
     def release(self, task, ws, report):

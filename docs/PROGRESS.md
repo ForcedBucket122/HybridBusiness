@@ -2,6 +2,34 @@
 
 Aktualizacja: 2026-11-02 (Europe/Warsaw). Projekt powstał w A:\HybridBusiness.
 
+## Aktualny punkt wznowienia — po ulepszeniach open-source
+
+- Ukończono audyt, kopię i analizę statyczną czterech repozytoriów. Źródła i decyzje:
+  [OPEN_SOURCE_ANALYSIS.md](OPEN_SOURCE_ANALYSIS.md); szczegółowe zmiany i ograniczenia:
+  [IMPROVEMENTS.md](IMPROVEMENTS.md). Nie kopiowano ich kodu ani zależności.
+- Dodano strukturalny kontekst Developer/QA, celowane edycje, kontrolę braku postępu,
+  raport QA oddzielający opinię od testów, status REVIEWED, typowaną pamięć, metryki
+  Ollama i trwałe checkpointy (12. tabela, migracja addytywna).
+- Panel pokazuje historię i dowody. Poprawiono wybór nowego projektu podczas
+  odświeżania oraz readiness start.ps1 niezależne od dostępności Ollama.
+- Końcowa weryfikacja: **67 passed, 2 skipped** backend; **4 passed** Edge;
+  TypeScript/Vite build zaliczony. Testy istniejące zachowano.
+- Faktyczny restart zachował identyczną treść audytowanych tabel: 2 projekty,
+  22 zadania, 17 prób, 4 checkpointy, 1 zgoda, 0 ZIP. SQLite integrity_check=ok.
+  Dowody: `logs/runtime-audit-before-restart.json`, `logs/runtime-audit-after-restart.json`.
+- Nowy realny E2E: `0a87073016a245c79d05873479265584`, CEO ukończył plan.
+  Developer `6ebd39bb5a874c5d81836821a55af167` FAILED po 2 próbach:
+  SyntaxError tasks.py:52, następnie IndentationError tasks.py:13. Kontrola składni
+  zatrzymała obie propozycje przed zapisem. Druga jest w checkpointcie rejected_proposal.
+  QA i Release PENDING za niespełnioną zależnością. Nie wykonano kodu, nie powstała zgoda ani ZIP.
+- Stary E2E osiągnął limit 5 napraw. Zachowano całą historię; wcześniejsza zgoda CONSUMED.
+- Backend i panel działają na http://127.0.0.1:8000; Ollama lokalna, modele bez zmian.
+  Pełny E2E nadal **niezaliczony**. Nie rozbudowywano autonomii przed rozwiązaniem tego problemu.
+- Końcowa kopia źródeł (także nowych plików), SQLite i artefaktów:
+  `data/backups/20261102T193123011126Z`, manifest SHA256. `git diff --check` bez błędów.
+
+Poniższe sekcje opisują wcześniejsze etapy; bieżący wynik i następny krok mają pierwszeństwo.
+
 ## Wykonane
 
 - Python/FastAPI/SQLAlchemy/SQLite: 11 tabel, trwałe zadania, historia, pamięć tekstowa.
@@ -23,7 +51,7 @@ Aktualizacja: 2026-11-02 (Europe/Warsaw). Projekt powstał w A:\HybridBusiness.
 - Python 3.14.7, Node 24.21.0, npm 11.19.0, Windows NT 10.0.26200.
 - NVIDIA RTX 3060 Ti, 8192 MiB (nvidia-smi).
 - Ollama 0.40.13, modele qwen3:4b i qwen2.5-coder:7b dostępne lokalnie.
-- pytest: 54 zaliczone, 2 pominięte (symlink privilege, opcjonalny test live), po dodaniu
+- Bazowy pytest przed obecną serią: 55 zaliczonych, 2 pominięte (symlink privilege, opcjonalny test live), po dodaniu
   regresji restartu, nadpisywania, wyników testów i prawdziwego runnera.
 - Dodatkowy pełny przepływ z prawdziwym runnerem i zaufanym fixture kodu: zaliczony,
   unittest rzeczywiście wykonał 1 test, Release zapisał ZIP.
@@ -79,7 +107,8 @@ Aktualizacja: 2026-11-02 (Europe/Warsaw). Projekt powstał w A:\HybridBusiness.
 
 ## Następny krok
 
-Sprawdzić automatyczne przekazanie rzeczywistego raportu błędów Developerowi, przygotowane
-naprawy i kolejną analizę QA. Nowa wersja kodu wymaga nowej zgody na wykonanie.
-Potem wdrożyć izolowany runner i niezależne testy akceptacyjne, aby ograniczyć zależność
-od jakości przeglądu qwen3:4b. Nie oznaczać wszystkich 18 kryteriów MVP jako zweryfikowanych.
+Poprawić generowanie początkowego kodu Python na podstawie zachowanego rejected_proposal
+z nowego E2E. Sprawdzić celowaną korektę składni bez resetowania liczników historycznych
+zadań. Następnie ponowić kontrolowany E2E; wykonanie nowego kodu wymaga konkretnej nowej
+zgody związanej z hashami. Szczegóły kolejnego etapu i granic w IMPROVEMENTS.md.
+Nie oznaczać wszystkich 18 kryteriów MVP jako zweryfikowanych.

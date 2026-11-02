@@ -53,3 +53,23 @@ async def test_offline():
     with pytest.raises(OllamaError,match='Brak połączenia'):
         await client.models()
     await client.close()
+
+
+async def test_validation_retry_names_fields_and_records_actual_usage():
+    import json
+    calls=[]
+    def handler(request):
+        if request.url.path.endswith('tags'):
+            return httpx.Response(200,json={'models':[{'name':'qwen3:4b'}]})
+        if request.url.path.endswith('show'): return httpx.Response(200,json={})
+        calls.append(json.loads(request.content))
+        content = '{"title":"private-content"}' if len(calls)==1 else '{"title":"OK","body":"Done","evidence":"estimated"}'
+        return httpx.Response(200,json={'message':{'content':content},'prompt_eval_count':100,'eval_count':20,'done_reason':'stop'})
+    client=OllamaClient(Settings,httpx.MockTransport(handler))
+    await client.generate('ceo','system','prompt',Report)
+    correction=calls[1]['messages'][-1]['content']
+    assert 'body' in correction and 'private-content' not in correction
+    assert client.metrics[-1]['prompt_eval_count']==100
+    assert client.metrics[-1]['eval_count']==20
+    assert calls[-1]['options']['num_predict'] + client.metrics[-1]['estimated_input_tokens'] < Settings().context_size
+    await client.close()

@@ -9,7 +9,7 @@ from .schemas import Settings
 from .security import Workspace
 
 ACTIVE = ('PENDING', 'RUNNING', 'WAITING_APPROVAL', 'INTERRUPTED')
-TERMINAL = ('COMPLETED', 'FAILED', 'CANCELLED')
+TERMINAL = ('COMPLETED', 'REVIEWED', 'FAILED', 'CANCELLED')
 
 
 class Service:
@@ -87,7 +87,7 @@ class Service:
             for task in s.scalars(select(Task).where(Task.status == 'RUNNING')):
                 task.status = 'INTERRUPTED'
                 task.error = 'Proces zakończył się podczas pracy. Wznów jawnie; testy wymagają nowej zgody.'
-                if task.result.get('phase') == 'execute':
+                if task.result.get('phase') in ('execute', 'write'):
                     task.result = {}
                 record(s, 'recovery', task.error, task.project_id, task.id)
                 for a in s.scalars(select(Approval).where(Approval.task_id == task.id, Approval.status.in_(['APPROVED', 'EXECUTING']))):

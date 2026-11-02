@@ -13,12 +13,12 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy import select
 
 from .database import (Agent, AgentMessage, Approval, Artifact, ChatMessage, Event, Project, Task,
-                       TaskRun, connect, serialize)
+                       TaskRun, TaskCheckpoint, connect, serialize)
 from .memory import MemoryService
 from .ollama import OllamaClient, OllamaError
 from .orchestrator import Orchestrator
 from .scheduler import ScheduledWork
-from .schemas import ChatInput, Decision, ProjectInput, Settings
+from .schemas import ChatInput, Decision, ProjectInput, Settings, MemoryInput
 from .security import Workspace
 from .service import Service
 
@@ -124,6 +124,10 @@ def create_app(data_dir=None, workspace=None, start_worker=True, client_factory=
             raise HTTPException(404, 'Nie znaleziono projektu.')
         return project
 
+    @app.get('/api/ready')
+    def ready():
+        return {'status': 'ok'}
+
     @app.get('/api/health')
     async def health():
         try:
@@ -182,6 +186,14 @@ def create_app(data_dir=None, workspace=None, start_worker=True, client_factory=
     def task_runs(task_id: str):
         with sessions() as s:
             return [serialize(r) for r in s.scalars(select(TaskRun).where(TaskRun.task_id == task_id).order_by(TaskRun.started_at))]
+
+    @app.get('/api/tasks/{task_id}/checkpoints')
+    def checkpoints(task_id: str):
+        with sessions() as s:
+            if not s.get(Task, task_id):
+                raise HTTPException(404, 'Nie znaleziono zadania.')
+            return [serialize(r) for r in s.scalars(select(TaskCheckpoint).where(
+                TaskCheckpoint.task_id == task_id).order_by(TaskCheckpoint.updated_at))]
 
     @app.post('/api/tasks/{task_id}/{action}')
     def task_action(task_id: str, action: str):
@@ -249,6 +261,12 @@ def create_app(data_dir=None, workspace=None, start_worker=True, client_factory=
         with sessions() as s:
             require_project(s, project_id)
             return [serialize(m) for m in MemoryService(s).search(project_id, query)]
+
+    @app.post('/api/projects/{project_id}/memory', status_code=201)
+    def remember(project_id: str, body: MemoryInput):
+        with sessions.begin() as s:
+            require_project(s, project_id)
+            return {'id': MemoryService(s).remember(project_id, body.kind, body.content)}
 
     @app.get('/api/artifacts/{artifact_id}/download')
     def download(artifact_id: str):

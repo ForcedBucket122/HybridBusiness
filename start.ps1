@@ -33,7 +33,7 @@ $LocalAIReady = $false
 for ($LocalAIAttempt=0; $LocalAIAttempt -lt 30; $LocalAIAttempt++) {
     if ($LocalAIBackend.HasExited) { throw 'Backend exited. Read logs\backend-error.log.' }
     try {
-        $LocalAIHealth = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/health' -TimeoutSec 2
+        $LocalAIHealth = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/ready' -TimeoutSec 2
         if ($LocalAIHealth.status -eq 'ok') { $LocalAIReady = $true; break }
     } catch { Start-Sleep -Milliseconds 500 }
 }
@@ -45,6 +45,9 @@ if ($Dev) {
     Write-Host 'Panel (development): http://127.0.0.1:5173'
 } else { Write-Host 'Panel: http://127.0.0.1:8000' }
 Write-Host 'API documentation: http://127.0.0.1:8000/docs'
-if (-not $LocalAIHealth.ollama.online) { Write-Warning 'Ollama is offline. Start the existing Ollama installation.' }
-if ($LocalAIHealth.ollama.missing.Count -gt 0) { Write-Warning ('Missing models: ' + ($LocalAIHealth.ollama.missing -join ', ')) }
+try {
+    $LocalAIModelHealth = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/health' -TimeoutSec 10
+    if (-not $LocalAIModelHealth.ollama.online) { Write-Warning 'Ollama is offline. Start the existing Ollama installation.' }
+    if ($LocalAIModelHealth.ollama.missing.Count -gt 0) { Write-Warning ('Missing models: ' + ($LocalAIModelHealth.ollama.missing -join ', ')) }
+} catch { Write-Warning 'Panel is ready; model health is not available yet.' }
 Write-Host 'Stop only tracked application processes: powershell -NoProfile -ExecutionPolicy Bypass -File .\stop.ps1'

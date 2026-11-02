@@ -3,7 +3,7 @@
 | Kryterium ze specyfikacji | Dowód / stan |
 | --- | --- |
 | 1. Lokalny Windows 11 | start/setup/stop wykonane w rzeczywistym środowisku |
-| 2. Panel WWW | build TypeScript/Vite, Edge, 3 testy UI, realne wysłanie polecenia |
+| 2. Panel WWW | build TypeScript/Vite, Edge, 4 testy UI, realne wysłanie polecenia, raporty QA i checkpointy |
 | 3. Backend | działające /api/health, REST, worker |
 | 4. Trwała SQLite | historia i oczekująca zgoda przetrwały rzeczywisty restart |
 | 5. Ollama | oba lokalne modele wykryte; prawdziwe zapytania CEO/Developer/QA |
@@ -15,12 +15,18 @@
 | 11. Kontrolowane próby | testy limitów prób i maksymalnej iteracji napraw przechodzą |
 | 12. Prawdziwy postęp | SSE z trwałych zdarzeń, stan API w panelu |
 | 13. Anulowanie | testy kolejki i prawdziwego procesu fixture na Windows przechodzą |
-| 14. Restart | testy recovery i faktyczny restart przy oczekującej zgodzie |
+| 14. Restart | testy recovery i faktyczne restarty; po ulepszeniach identyczne audyty 22 zadań, 17 prób, 4 checkpointów i pozostałych danych |
 | 15. Zatwierdzenia | brak zgody blokuje wykonanie; hash binding i jednorazowość przetestowane |
 | 16. Pobranie artefaktu | integracja API/ZIP z prawdziwym runnerem na zaufanym fixture; brak ZIP realnego TODO |
-| 17. Podstawowe testy | 54 pass, 2 skip; osobno live 1 pass; frontend 3 pass |
+| 17. Podstawowe testy | 67 pass, 2 skip; wcześniejszy osobny live 1 pass; frontend 4 pass |
 | 18. README | instalacja, start, stop, testy, ograniczenia i dalsza praca opisane |
 
 **Nie ogłoszono w pełni zweryfikowanego MVP.** Po zgodzie użytkownika testy realnego
 produktu wykonano: 4 testy, 3 błędy, exit code 1. Raport jest zapisany na dysku i w SQLite.
 Kryteria dotyczące realnych poprawek, ponownej weryfikacji i wydania wymagają dokończenia.
+
+Po ulepszeniach wykonano nowy E2E `0a87073016a245c79d05873479265584`. CEO ukończył plan,
+ale dwie odpowiedzi Developera miały błędy składni; obie zablokowano przed zapisem.
+Brak nowego wykonania testów i ZIP. Nowe regresje potwierdzają celowane edycje,
+zatrzymanie NO_PROGRESS i przekazanie prawdziwych błędów; nie zastępują zaliczenia
+realnego przepływu modelowego. Historyczny projekt osiągnął limit 5 napraw.

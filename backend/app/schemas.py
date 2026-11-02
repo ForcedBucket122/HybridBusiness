@@ -80,10 +80,38 @@ class CodeResult(StrictModel):
     files: list[SourceFile] = Field(min_length=1, max_length=20)
 
 
+class FileEdit(StrictModel):
+    path: str = Field(min_length=1, max_length=200)
+    old_text: str = Field(max_length=100000)
+    new_text: str = Field(max_length=100000)
+
+
+class RepairResult(StrictModel):
+    summary: str = Field(min_length=1, max_length=2000)
+    edits: list[FileEdit] = Field(min_length=1, max_length=20)
+
+
+class QAIssue(StrictModel):
+    file: str | None = None
+    line: int | None = Field(default=None, ge=1)
+    kind: str = Field(default='review', max_length=100)
+    message: str = Field(min_length=1, max_length=4000)
+    expected: str = Field(default='', max_length=2000)
+    actual: str = Field(default='', max_length=4000)
+    suggestion: str = Field(default='', max_length=2000)
+    source: Literal['static', 'runner', 'model'] = 'model'
+
+
 class Review(StrictModel):
     summary: str = Field(min_length=1, max_length=4000)
     issues: list[str] = Field(max_length=30)
     acceptable: bool
+    findings: list[QAIssue] = Field(default_factory=list, max_length=30)
+
+
+class MemoryInput(StrictModel):
+    content: str = Field(min_length=1, max_length=4000)
+    kind: Literal['preference', 'decision'] = 'preference'
 
 
 class Report(StrictModel):

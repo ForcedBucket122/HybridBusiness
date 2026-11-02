@@ -3,7 +3,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
-from app.schemas import CodeResult, Plan, Report, Review
+from app.schemas import CodeResult, Plan, Report, Review, RepairResult
 
 CODE = "def add(a, b):\n    return a + b\n"
 TEST = "import unittest\nfrom main import add\nclass TestAdd(unittest.TestCase):\n    def test_add(self):\n        self.assertEqual(add(2, 3), 5)\n"
@@ -30,6 +30,8 @@ class FakeClient:
             return Plan(summary='Plan', steps=[{'agent':'developer', 'title':'Implementacja', 'description':'Build add', 'acceptance':'Works with tests'}])
         if schema == CodeResult:
             return CodeResult(summary='Files', files=[{'path':'main.py','content':CODE}, {'path':'test_main.py','content':TEST}, {'path':'README.md','content':'# Run\npython main.py\n'}])
+        if schema == RepairResult:
+            return RepairResult(summary='Targeted fixture repair', edits=[{'path':'main.py', 'old_text':'return a + b', 'new_text':'return sum((a, b))'}])
         if schema == Review:
             if self.review_failures:
                 self.review_failures -= 1
