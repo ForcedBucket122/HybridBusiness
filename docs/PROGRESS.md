@@ -1,8 +1,170 @@
 # Postęp LocalAICompany
 
-Aktualizacja: 2026-11-02 (Europe/Warsaw). Projekt powstał w A:\HybridBusiness.
+Aktualizacja: 2026-11-03 (Europe/Warsaw). Projekt powstał w A:\HybridBusiness.
 
-## Aktualny punkt wznowienia — po ulepszeniach open-source
+## 2026-11-03 — ograniczona próba bez JSON dla pojedynczego pliku
+
+- Wykorzystano poprzednie wyniki; nie powtórzono serii temperatur ani porównań JSON.
+  Jedna nowa próba `scripts/diagnose_generation.py --plain-source --task-id
+  9b3e4398fda3421fa18f965a6d62af5e` zwróciła poprawny składniowo Python dla ostatniego
+  wadliwego kandydata. Brak wykonania kodu. Wynik: 427 tokenów wejścia, 306 wyjścia,
+  done_reason=stop, około 7,1 s. Dowód: `logs/generation-diagnosis-20261103T161412Z/`.
+- Potwierdzona przyczyna bezpośrednia pozostaje po stronie generowanej treści:
+  niekompletny Python pojawia się przed zapisem, przy niewyczerpanym limicie tokenów.
+  Wynik nowej próby wskazuje na wpływ sposobu żądania odpowiedzi, ale nie dowodzi,
+  że ograniczanie JSON jest jedyną przyczyną (zmieniła się też instrukcja odpowiedzi).
+- W istniejącym candidates.py tylko fallback odtwarzający jeden plik otrzymuje
+  zwykły Python, bez wymuszonej gramatyki JSON, z temperaturą 0. Silnik ustala ścieżkę;
+  model nie wybiera miejsca zapisu. Pozostałe etapy i architektura bez zmian.
+  Usuwana jest wyłącznie pełna zewnętrzna otoczka Markdown; ast.parse, kontrola
+  hashów, testów, limit trzech korekt i zgoda na wykonanie pozostają obowiązkowe.
+- Krótkie testy: `pytest tests/test_candidates.py tests/test_ollama.py
+  tests/test_improvements.py -q`: **36 passed**, 6,86 s. Bez pełnej regresji i bez
+  ponownego budowania niezmienionego frontendu.
+- Jedyny nowy E2E: projekt `a82b8795a5d1496eaad3c87e00015581`. CEO i początkowy
+  Developer zakończone; main.py i test_main.py przechodzą ast.parse na używanym Pythonie.
+  W tym przebiegu korekty składni nie były potrzebne (candidate_state.corrections_used=0),
+  więc działania fallbacku nie należy przypisywać sukcesowi składni tego konkretnego E2E.
+- Przepływ nadal **niezaliczony**, tym razem blokada dotyczy QA, nie składni:
+  QA 0 zgłosił `LatestTestResult: null` jako błąd, mimo że testy na tym etapie wymagają
+  dopiero zgody. QA 1 zgłosił rzekomą różnicę spacji w test_list_tasks. Statyczne porównanie
+  funkcji list_tasks i asercji assert_has_calls wskazuje ten sam format
+  `0: Task 1 [Pending]` / `1: Task 2 [Done]`; również pola expected i actual w opinii
+  modelu są identyczne. Nie jest to dowód wykonania ani zaliczenia testów.
+- Developer 2 (`813ace0a87c24a29b89e4afb5f881863`) zakończył FAILED/NO_PROGRESS.
+  QA 2 i Release pozostają PENDING za niespełnioną zależnością. Brak nowych zgód,
+  wykonanych testów produktu i ZIP. Nie resetowano liczników i nie uruchomiono drugiego E2E.
+  Zwięzły dowód, w tym porównane fragmenty: `logs/e2e-plain-source-result.json`.
+- Następny krok: doprecyzować kontrakt QA przed testami (brak wyniku przed zgodą nie
+  jest wadą kodu), odseparować opinię modelu od rzeczywistych wyników i weryfikować
+  sprzeczne znaleziska względem wskazanych fragmentów. Jeśli problem pozostanie,
+  wykonać ograniczone porównanie modeli dla QA, np. z już zainstalowanym
+  qwen2.5-coder:7b; nie zakładać poprawy bez pomiaru i nie pobierać modeli bez zgody.
+
+## 2026-11-03 — diagnostyka i niezawodność generowania
+
+**Cel końcowy nadal nieosiągnięty. Dalsze próby modelowe zatrzymano zgodnie z limitem
+użytkownika. Nie ma nowego zaliczonego wykonania testów produktu ani ZIP.**
+
+### Zabezpieczenie i odtworzenie
+
+- Punkt bazowy Git: `d26e77a` (poprzednie zmiany były już zapisane przez użytkownika;
+  drzewo na początku czyste). Nie cofnięto kodu ani danych. Kopia źródeł, SQLite,
+  projektów i logów: `data/backups/20261103T155202181235Z`, manifest SHA256,
+  SQLite integrity_check=ok.
+- Odczytano historyczny rejected_proposal zadania `6ebd39bb5a874c5d81836821a55af167`.
+  Dokładny błąd: **unexpected unindent**, nie unexpected indent, `tasks.py:13`.
+  Po `    @staticmethod` następowało `def generate_id():` bez wcięcia klasy;
+  analogicznie wadliwa była metoda po `@classmethod`. Były też niedozwolone fizyczne
+  nowe linie wewnątrz pojedynczo cytowanego napisu menu.
+- Round-trip JSON → parser → SourceFile → Workspace.write/read zachował treść 1:1.
+  Mechanizm zapisu i exact-match edits nie stosuje dedent ani strip do kodu. Brak
+  dowodu, że zapis usuwa spacje. Surowej pierwotnej odpowiedzi sprzed poprzedniej
+  sesji nie zachowano; nowe odpowiedzi diagnostyczne zapisano w całości.
+- W parserze znaleziono niezależny błąd: globalne usuwanie `<think>...</think>` mogło
+  zmienić takie napisy wewnątrz JSON/kodu. Teraz usuwana jest wyłącznie otoczka na
+  początku odpowiedzi. To nie była przyczyna historycznego błędu wcięcia.
+- ast.parse już istniało przed tą sesją. Brakowało automatycznego, ograniczonego
+  powrotu od odrzuconej składni do Developera przed zakończeniem zadania.
+
+### Pomiary prawdziwej Ollama
+
+Backend i Ollama początkowo były wyłączone. Uruchomiono istniejącą instalację
+`A:\AI\Ollama\app\ollama.exe`, loopback, istniejący katalog modeli. Nie pobierano,
+nie przenoszono modeli i nie zmieniano ich szablonów ani globalnej konfiguracji.
+Model: qwen2.5-coder:7b, Q4_K_M, 7.6B; kontekst 8192. Pięć sekwencyjnych prób
+diagnostycznych tego samego historycznego pliku, bez wykonywania wygenerowanego kodu:
+
+| Wariant | Wynik ast.parse | Tokeny wyjścia | done_reason |
+| --- | --- | --- | --- |
+| JSON z content, temperatura 0.2, seed 42 | ten sam unexpected unindent:13; identyczny plik | 641 | stop |
+| Ten sam prompt, temperatura 0 | ten sam błąd; identyczny plik | 641 | stop |
+| Temperatura 0, repeat_penalty=1.0 | ten sam błąd; identyczny plik | 641 | stop |
+| Jawna instrukcja poza JSON, pełne content | nadal unexpected unindent:13 | 664 | stop |
+| Jawna instrukcja, kod jako tablica pojedynczych linii | poprawna składnia, poprawione wcięcia | 772 | stop |
+
+Dowody: `logs/generation-diagnosis-20261103T155325Z/` i
+`logs/generation-diagnosis-20261103T155450Z/` zawierają report.json, surowe odpowiedzi,
+historyczny odrzut i model-info.json. Skrypt: `scripts/diagnose_generation.py`.
+To mała próbka diagnostyczna, nie dowód ogólnej skuteczności modelu. Temperatury
+produkcyjnej 0.2 nie zmieniono — same zmiany temperatury nie poprawiły badanego przypadku.
+
+### Zmiany ograniczone do naprawy generowania
+
+- `ollama.py` / `schemas.py`: dla kodu Developera transport `path + lines` zastępuje
+  długie pole content. Wcięcia zachowuje się dokładnie; jedna pozycja to jedna linia,
+  bez osadzonych CR/LF. Wewnątrz aplikacji pozostaje dotychczasowy SourceFile/CodeResult.
+  Usuwanie Markdown dotyczy tylko otoczki JSON; kod nie jest automatycznie przeformatowywany.
+- `candidates.py` / `orchestrator.py`: pełna propozycja jest sprawdzana przed zapisem.
+  SyntaxError wraca do Developera z nazwą pliku, typem, komunikatem, linią, offsetem,
+  wadliwym wierszem i całą treścią tego pliku. Pierwsza korekta jest celowana, następne
+  mogą zastąpić tylko ten jeden wadliwy plik. Poprawne pliki obok pozostają niezmienione.
+- Najwyżej `min(3, max_iterations)` korekty składni na zadanie. Licznik jest zapisany
+  przed requestem w candidate_state i nie zeruje się po retry/restart. Każda próba ma
+  checkpoint candidate_attempt_N. Błędny kandydat nigdy nie nadpisuje działającego pliku.
+  Zachowano kontrolę hashów, zgód, nazw testów, rozmiaru projektu i braku postępu.
+- `context.py`: nowe QA nie dostaje starych opinii jako aktualnego ErrorSummary.
+  Developer nadal dostaje błędy poprzedniego QA; rzeczywiste wyniki testów są zachowane.
+  `tools.py`: wymaganie CLI wynika również z pierwotnego celu użytkownika, nawet jeśli
+  CEO nie powtórzył słowa „konsolowa” w kryteriach akceptacji QA.
+- Nie dodawano funkcji produktu, zależności, nowych modeli, usług ani większej autonomii.
+
+### Rzeczywiste przebiegi E2E
+
+1. Projekt `03285313dc5c4425b6a36a0099291a03`: CEO ukończył plan. Początkowy kod miał
+   SyntaxError w task_manager.py:32 (`'[' was never closed`). Developer dostał dokładny
+   odrzut i **naprawił go jedną celowaną korektą**, co potwierdziło ast.parse przed zapisem
+   (task `2b909f941d714a47a08fdca6bb153ad0`, candidate_state.valid=true, corrections_used=1).
+   Nie była to symulacja. Dalej QA zgłosił brak testów i README, a Developer je dodał.
+   Następny QA powtórzył stare zarzuty mimo obecności plików — potwierdzony błąd kontekstu,
+   opisany i poprawiony wyżej. Trzecia naprawa zakończyła się NO_PROGRESS. Zachowano plan,
+   pliki i historię; nie zmieniono tego statusu na sukces.
+2. Po konkretnej poprawce kontekstu QA uruchomiono drugi i ostatni przebieg:
+   `6f34c66b00914e838d0395c52bf1e157`. CEO ukończył plan, Developer
+   `9b3e4398fda3421fa18f965a6d62af5e` wygenerował niedokończony f-string w tasks.py:37.
+   Jedna korekta celowana i dwie pełnego pojedynczego pliku nadal dawały SyntaxError:
+   niedomknięty f-string, następnie `'(' was never closed`. Limit 3 zadziałał.
+   Workspace tego projektu jest pusty; QA/Release PENDING za niespełnioną zależnością.
+
+W drugim przebiegu wszystkie 4 odpowiedzi Developera zakończyły się `stop`, z liczbą
+tokenów wyjścia 484, 87, 407, 405 przy limitach 5650/6000. Nie ma dowodu ucięcia przez
+limit tokenów lub timeout. Model sam zakończył poprawny strukturalnie JSON zawierający
+niekompletny Python. Zmiana reprezentacji pomogła w jednym badaniu, ale nie rozwiązała
+niezawodności. Nie ustalono niskopoziomowej przyczyny zachowania wag/tokenizacji lub
+wpływu ograniczania generacji JSON; nie należy przedstawiać jednej z tych hipotez jako faktu.
+
+Eksport rzeczywistych zadań, odpowiedzi, checkpointów, metryk i hashów:
+`logs/generation-e2e-20261103.json`. Oba nowe projekty mają **0 zgód i 0 artefaktów**.
+Nie wykonano żadnego nowego kodu wygenerowanego przez model. Nie było poprawnego kompletnego
+produktu, dla którego należałoby prosić o zgodę na wykonanie testów. Obejrzano rzeczywisty
+panel: `logs/e2e-evidence-1793721971197.png`; pokazuje błąd i wszystkie trzy próby.
+
+### Końcowa weryfikacja i granice
+
+- `.venv/Scripts/python.exe -m pytest -q`: **82 passed, 2 skipped**, 16,37 s.
+  Pominięte: uprawnienie symlink Windows i opt-in live. Zachowano istniejące testy.
+  Nowe regresje odtwarzają wcięcia, trzy realne uszkodzenia f-string, JSON/Markdown,
+  zachowanie wcięć w transporcie, dokładne błędy, wadliwe edycje, fallback jednego pliku,
+  nietknięte poprawne pliki, zmianę użytkownika i trwały limit po retry.
+- `npm.cmd run build`: zaliczony. `npm.cmd test`: **4 passed** w Edge.
+- Poprawka zgłoszona podczas pracy: dodano `pyrightconfig.json` z extraPaths=backend
+  i środowiskiem .venv, aby analizator edytora rozpoznawał importy app.ollama,
+  app.schemas i app.security w scripts/diagnose_generation.py. Wszystkie trzy
+  importy zweryfikowano przez runpy w .venv; `--help` działa. Bez wywołania modelu.
+- Kontrolowany restart: identyczne raporty przed/po, integrity_check=ok. 4 projekty,
+  36 zadań, 27 prób, 45 checkpointów, 1 historyczna zgoda, 0 artefaktów, 30 wiadomości,
+  21 wpisów pamięci. `logs/candidate-audit-*-restart-20261103.json`.
+- Backend i panel działają na http://127.0.0.1:8000, HYBRID, bez aktywnego zadania.
+  Zależności blokują dalsze wykonanie obu nieudanych planów. Nie resetowano ich liczników.
+- **Nie potwierdzono funkcjonalności końcowego TODO, zaliczonych testów produktu ani ZIP.**
+  Niezależne testy akceptacyjne i izolowany runner pozostają ograniczeniami wcześniejszego MVP.
+
+Następny etap wymaga nowej, uzasadnionej hipotezy diagnostycznej, np. kontrolowanego
+porównania generowania jednego pliku poza ograniczaniem JSON z obecnym formatem linii.
+Nie kontynuować tych samych retry, nie zwiększać limitów i nie pobierać nowych modeli
+bez zgody. Obecna sesja kończy testy na udokumentowanej granicy zgodnie z poleceniem użytkownika.
+
+## Punkt wznowienia z 2026-11-02 — po ulepszeniach open-source
 
 - Ukończono audyt, kopię i analizę statyczną czterech repozytoriów. Źródła i decyzje:
   [OPEN_SOURCE_ANALYSIS.md](OPEN_SOURCE_ANALYSIS.md); szczegółowe zmiany i ograniczenia:

@@ -75,9 +75,36 @@ class SourceFile(StrictModel):
     content: str = Field(max_length=100000)
 
 
+class PythonSource(StrictModel):
+    content: str = Field(min_length=1, max_length=100000)
+
+
 class CodeResult(StrictModel):
     summary: str = Field(min_length=1, max_length=4000)
     files: list[SourceFile] = Field(min_length=1, max_length=20)
+
+
+class SourceLines(StrictModel):
+    """Wire representation for the local coder; indentation is data, never normalized."""
+    path: str = Field(min_length=1, max_length=200)
+    lines: list[str] = Field(min_length=1, max_length=2000)
+
+    @field_validator('lines')
+    @classmethod
+    def physical_lines(cls, value):
+        if any('\n' in line or '\r' in line for line in value):
+            raise ValueError('Each array item must contain exactly one physical source line.')
+        if len(('\n'.join(value)+'\n').encode('utf-8')) > 100000:
+            raise ValueError('File exceeds 100 KB.')
+        return value
+
+    def source(self):
+        return SourceFile(path=self.path, content='\n'.join(self.lines)+'\n')
+
+
+class CodeLinesResult(StrictModel):
+    summary: str = Field(min_length=1, max_length=4000)
+    files: list[SourceLines] = Field(min_length=1, max_length=20)
 
 
 class FileEdit(StrictModel):

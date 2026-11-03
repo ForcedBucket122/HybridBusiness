@@ -76,6 +76,11 @@ async def test_repair_receives_latest_actual_tests_and_review_is_not_completed(s
     text, _ = ContextBuilder(service).build(dev)
     assert json.loads(text)['LatestTestResult']['applies_to_current_files'] is False
     assert runner.calls == 1  # New version never executes on the old approval.
+    with service.sessions() as s:
+        next_qa = s.scalar(select(Task).where(Task.agent=='qa',Task.iteration==1))
+    qa_context, _ = ContextBuilder(service).build(next_qa)
+    assert json.loads(qa_context)['ErrorSummary'] == []
+    assert json.loads(qa_context)['LatestTestResult']['passed'] is False
 
 
 async def test_semantic_noop_fails_without_new_qa_or_execution(system):
@@ -163,6 +168,8 @@ async def test_invalid_proposal_is_preserved_and_available_on_retry(system):
         task = Task(project_id=p.id,agent='developer',title='Build',description='Build');s.add(task);s.flush()
     original = worker.client.generate
     async def broken(role, system, prompt, schema):
+        if schema != CodeResult:
+            raise RuntimeError('offline during candidate correction')
         return CodeResult(summary='Broken',files=[{'path':'main.py','content':'def broken('}])
     worker.client.generate = broken
     await worker.tick()
@@ -171,8 +178,9 @@ async def test_invalid_proposal_is_preserved_and_available_on_retry(system):
     assert rejected['written'] is False and rejected['error']['line']==1
     service.action(task.id,'retry')
     async def corrected(role, system, prompt, schema):
-        assert json.loads(prompt)['RejectedProposal']['error']['kind']=='SyntaxError'
-        return await original(role,system,prompt,schema)
+        from app.schemas import PythonSource
+        assert schema == PythonSource and 'SyntaxError' in prompt and 'def broken(' in prompt
+        return PythonSource(content='def broken():\n    return 1\n')
     worker.client.generate = corrected
     await worker.tick()
     with service.sessions() as s: assert s.get(Task,task.id).status=='COMPLETED'

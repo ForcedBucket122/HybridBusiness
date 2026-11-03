@@ -52,7 +52,9 @@ class ContextBuilder:
             'RelevantFiles': files,
             'LatestTestResult': None if not latest else {**latest, 'tested_hashes': tested.result.get('tested_hashes', {}),
                 'applies_to_current_files': tested.result.get('tested_hashes') == hashes},
-            'ErrorSummary': report.get('issues', qa.result.get('review', {}).get('issues', []) if qa else []),
+            # A developer needs the preceding review. A new QA review must not treat old
+            # complaints (e.g. a formerly missing file) as current observed failures.
+            'ErrorSummary': report.get('issues', qa.result.get('review', {}).get('issues', []) if qa else []) if task.agent=='developer' else [],
             'RequiredChanges': task.description,
             'PreviousAttempts': history,
             'RemainingRetries': {'task_attempts': max(0, cfg.max_attempts - task.attempts),

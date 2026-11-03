@@ -1,8 +1,9 @@
 # Testowanie
 
-Ostatnia weryfikacja po ulepszeniach (2026-11-02): backend **67 passed, 2 skipped**,
-frontend **4 passed**, build TypeScript/Vite zaliczony. Realny E2E negatywny:
-Developer zwrócił błędną składnię w obu dozwolonych próbach. Nie wykonywano tych plików.
+Ostatnia weryfikacja (2026-11-03): backend **82 passed, 2 skipped**,
+frontend **4 passed**, build TypeScript/Vite zaliczony. Realne E2E nadal negatywne:
+pierwszy wykazał skuteczną automatyczną korektę składni, ale później NO_PROGRESS;
+drugi wyczerpał limit 3 korekt f-string. Nie wykonywano nowego kodu wygenerowanego.
 
 ## Zestawy automatyczne
 
@@ -29,6 +30,18 @@ traceback, aktualne dowody w kontekście, checkpoint częściowego zapisu, zmian
 użytkownika, pamięć, przekroczenie budżetu, odrzuty kodu i zmiana plików podczas QA.
 Frontend sprawdza również raport QA i historię checkpointów oraz wybór nowego
 projektu przy istniejącym poprzednim projekcie.
+
+`tests/test_candidates.py`: odtworzenie historycznego unexpected unindent:13 i realnych
+błędów f-string, korekta kandydata bez zapisu wadliwej wersji, fallback pojedynczego pliku,
+zachowanie poprawnych plików, trwały limit po retry, kolizja ze zmianą użytkownika,
+ochrona literalnych tagów think/Markdown i format pojedynczych linii w JSON.
+Zmodyfikowany test retry w test_improvements nadal sprawdza zachowany odrzut i udane
+wznowienie; symuluje awarię inferencji podczas korekty, zamiast omijać nową pętlę kandydatów.
+
+`scripts/diagnose_generation.py --experiment`: trzy lokalne requesty porównujące temperaturę
+i repeat_penalty. `--experiment --formats`: dwa porównania formatu. Skrypt tylko ast.parse,
+bez importu/wykonania wygenerowanych plików; zapisuje surowe odpowiedzi w logs.
+Nie uruchamiać tych prób bez celu diagnostycznego: bieżąca seria została już zakończona.
 
 ## Uruchamianie
 

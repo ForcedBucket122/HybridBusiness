@@ -9,7 +9,8 @@ def materialize(ws, repair):
     contents = {}
     for edit in repair.edits:
         target = ws.path(edit.path)
-        if not target.exists() and edit.path not in contents:
+        exists = ws.contains(edit.path) if hasattr(ws, 'contains') else target.exists()
+        if not exists and edit.path not in contents:
             if edit.old_text:
                 raise ValueError(f'{edit.path}: nowy plik wymaga pustego old_text.')
             contents[edit.path] = edit.new_text

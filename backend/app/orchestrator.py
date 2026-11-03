@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 
 from .agents import AGENTS, COMMON
 from .checkpoints import Checkpoints
+from .candidates import validate_candidate
 from .context import ContextBuilder
 from .evidence import qa_report
 from .repairs import materialize, validate_batch
@@ -180,9 +181,12 @@ class Orchestrator:
             return self.write_code(task, ws, CodeResult.model_validate(task.result['proposed']), approved=True)
         if task.agent == 'qa':
             reviewed_hashes = ws.hashes()
+            context = self.context(task, True)
             with self.sessions.begin() as s:
-                static = ToolRegistry(ws, s, task, {}).call('inspect_project', {}, agent.tools)
-            review = await agent.execute(self.client, self.context(task, True) + '\nStatic checks: ' + json.dumps(static))
+                requirements = str(json.loads(context)['ProjectGoal']) + '\n' + task.description
+                static = ToolRegistry(ws, s, task, {}, requirements=requirements).call('inspect_project', {}, agent.tools)
+            review = await agent.execute(self.client, context + '\nCURRENT static checks: ' + json.dumps(static) +
+                '\nReview only the current files shown above. Do not repeat historical issues that those files already fix.')
             if self.cancelled(task.id):
                 return {'summary': 'Anulowano.'}
             if reviewed_hashes != ws.hashes():
@@ -216,7 +220,12 @@ class Orchestrator:
                 return self.write_code(task, ws, CodeResult.model_validate(proposal['code']), recovering=True)
             before = ws.hashes()
             context = self.context(task, True)
-            if task.iteration:
+            candidate = self.checkpoints.get(task.id, 'candidate_state')
+            if candidate:
+                if candidate['source_hashes'] != before:
+                    raise ValueError('Pliki zmieniły się od przygotowania kandydata; wznowienie zablokowane.')
+                result = CodeResult.model_validate(candidate['code'])
+            elif task.iteration:
                 edits = await self.client.generate('developer', COMMON +
                     'Repair the current files using exact old_text/new_text replacements. old_text must occur exactly once. '
                     'To create a missing file only, use empty old_text and the full content as new_text. '
@@ -232,11 +241,12 @@ class Orchestrator:
             if before != ws.hashes():
                 raise ValueError('Pliki zmieniły się podczas generowania; nie zapisano odpowiedzi.')
             try:
-                validate_batch(ws, result, repair=bool(task.iteration))
+                result = await validate_candidate(self, task, ws, result, before, context)
             except (ValueError, SyntaxError) as exc:
-                self.checkpoints.save(task, 'rejected_proposal', {'code': result.model_dump(), 'written': False,
-                    'error': {'kind': type(exc).__name__, 'file': getattr(exc, 'filename', None),
-                              'line': getattr(exc, 'lineno', None), 'message': str(exc)}, 'source_hashes': before})
+                if not self.checkpoints.get(task.id, 'rejected_proposal'):
+                    self.checkpoints.save(task, 'rejected_proposal', {'code': result.model_dump(), 'written': False,
+                        'error': {'kind': type(exc).__name__, 'file': getattr(exc, 'filename', None),
+                                  'line': getattr(exc, 'lineno', None), 'message': str(exc)}, 'source_hashes': before})
                 raise
             self.checkpoints.save(task, 'proposal', {'code': result.model_dump(), 'source_hashes': before})
             return self.write_code(task, ws, result)

@@ -16,9 +16,10 @@ class Tool:
 
 
 class ToolRegistry:
-    def __init__(self, workspace, session, task, owned):
+    def __init__(self, workspace, session, task, owned, requirements=None):
         self.workspace, self.session, self.task, self.owned = workspace, session, task, owned
         self.calls = 0
+        self.requirements = task.description if requirements is None else requirements
         self.registry = {
             'list_files': Tool('list_files', 'List project files', QueryArgs, 'read', lambda a: workspace.files()),
             'read_file': Tool('read_file', 'Read UTF-8 file', FileArgs, 'read', lambda a: workspace.read(a.path)),
@@ -89,6 +90,6 @@ class ToolRegistry:
             errors.append('Brak testów unittest test_*.py.')
         if not any(f.lower() == 'readme.md' for f in files):
             errors.append('Brak README.md.')
-        if any(word in self.task.description.lower() for word in ('konsol', 'console', 'command-line')) and not entrypoint:
+        if any(word in self.requirements.lower() for word in ('konsol', 'console', 'command-line')) and not entrypoint:
             errors.append('Zlecono aplikację konsolową, ale brak punktu wejścia if __name__ == "__main__" w kodzie aplikacji.')
         return {'kind': 'static_only', 'errors': errors, 'test_functions': tests, 'files': files}

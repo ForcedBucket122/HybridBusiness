@@ -1,5 +1,12 @@
 # Ulepszenia istniejącego LocalAICompany — 2026-11-02
 
+Aktualizacja niezawodności z 2026-11-03: zachowano poniższe rozwiązania i dodano
+ograniczoną walidację/naprawę kandydatów (`candidates.py`), transport kodu jako linii
+oraz korekty parsera i kontekstu QA. Bez nowych funkcji produktu i zależności.
+Aktualny wynik: 82 testy backendu i 4 frontendu zaliczone; rzeczywisty E2E nadal
+niezaliczony po osiągnięciu limitu korekt. Szczegółowa diagnoza, metryki i ograniczenia
+znajdują się na początku [PROGRESS.md](PROGRESS.md). Dane poniżej opisują etap z 2 listopada.
+
 Nie zastąpiono aplikacji ani bazy. Przed zmianami utworzono tag
 `checkpoint/before-open-source-improvements-20261102` i kopię
 `data/backups/20261102T190826470092Z`. Analizowane repozytoria pobrano wyłącznie do
