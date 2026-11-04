@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.database import Approval, Artifact, Task, TaskRun
 from app.runner import ApprovedHostRunner
-from app.schemas import Decision
+from app.schemas import Decision, CodeResult
 from app.tools import ToolRegistry
 from app.memory import MemoryService
 from test_flow import prepare
@@ -51,8 +51,14 @@ async def test_restart_after_plan_side_effects_does_not_duplicate(system):
 async def test_restart_after_repair_side_effects_does_not_duplicate(system):
     service,worker,http,runner=system
     p=service.create_project('Crash repair');service.enqueue(p.id,'Build','crash-repair-request')
+    original = worker.client.generate
+    async def missing_readme(role, system, prompt, schema):
+        result = await original(role, system, prompt, schema)
+        if schema == CodeResult:
+            result.files = [f for f in result.files if f.path != 'README.md']
+        return result
+    worker.client.generate = missing_readme
     await worker.tick();await worker.tick()
-    worker.client.review_failures=1
     task_id,run_id=worker.claim()
     await worker.execute(task_id)
     service.recover();service.action(task_id,'retry');await worker.tick()

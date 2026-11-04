@@ -6,7 +6,7 @@ import pytest
 
 from app.database import Approval, Artifact, ChatMessage, Task, TaskRun, SystemSetting, now
 from app.memory import MemoryService
-from app.schemas import Decision
+from app.schemas import Decision, CodeResult
 from app.scheduler import ScheduledWork
 
 
@@ -87,7 +87,13 @@ async def test_test_failure_creates_repair_chain(system):
 async def test_repair_limit(system):
     service,worker,http,runner=system
     cfg=service.settings(); cfg.max_iterations=1; service.save_settings(cfg)
-    worker.client.review_failures=10
+    original = worker.client.generate
+    async def missing_readme(role, system, prompt, schema):
+        result = await original(role, system, prompt, schema)
+        if schema == CodeResult:
+            result.files = [f for f in result.files if f.path != 'README.md']
+        return result
+    worker.client.generate = missing_readme
     p=service.create_project('Repair limit'); service.enqueue(p.id,'Build','repair-limit-request')
     for _ in range(7): await worker.tick()
     with service.sessions() as s:

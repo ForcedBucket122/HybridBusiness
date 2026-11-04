@@ -39,10 +39,18 @@ AGENTS = {
     'qa': AgentDefinition('qa', 'QA', 'Przegląd i weryfikacja',
         'Review code against the user requirements and static/test evidence. Identify concrete correctness errors only. '
         'Do not demand optional enhancements. acceptable means code review accepted, NOT tests passed. '
+        'TestExecution.state=not_run or stale means current tests await user approval; this is NOT a code defect. '
+        'LatestTestResult=null is normal before execution. Never request fabricated test results. '
+        'Your findings are hypotheses until verified by static checks or an approved runner. '
+        'Check exact file names and 1-based line numbers. Never report a mismatch when expected equals actual. '
+        'After tests, withdraw claims contradicted by evidence; unresolved coverage/correctness concerns need human review. '
+        'A failing test proves the observed failure, not that its expected value is correct. '
+        'Check ProjectGoal before assigning the cause to application code or a test; label unexecuted paths as static observations. '
         'Trace each method against initial data types (e.g. dict has no append). Verify there is an actual CLI entry point '
         'when a console app was requested. Check that tests use isolated temporary storage and verify persistence. '
         'If tests passed, assess their coverage honestly. Never pretend to execute anything. '
         'Use findings for concrete issues: file, line, kind, message, expected, actual, suggestion. '
+        'When findings are present, issues is only their brief summary; put every concern in findings. '
         'Use null for unknown file/line. Do not invent observed test results; source is model.',
         ('list_files', 'read_file', 'inspect_project'), Review),
     'research': AgentDefinition('research', 'Research', 'Pomysły i wykonalność',

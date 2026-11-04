@@ -13,6 +13,49 @@ BROKEN = ('import json\nimport os\nfrom collections import defaultdict\nfrom tem
 FIXED = BROKEN.replace('\ndef generate_id():','\n    def generate_id():')
 
 
+@pytest.mark.parametrize('source', [
+    "print('error', file=None, file=None)\n",
+    'return 1\n',
+    'break\n',
+])
+def test_compiler_errors_rejected_without_executing_source(system, tmp_path, source):
+    from app.evidence import check_python_source
+    from app.repairs import validate_batch
+    from app.tools import ToolRegistry
+    service, worker, *_ = system
+    task, ws = developer(system)
+    marker = tmp_path / 'must_not_exist'
+    prefix = f'from pathlib import Path\nPath({str(marker)!r}).write_text("executed")\n'
+    code = prefix + source
+    ast.parse(code)  # The old validation accepted all three invalid programs.
+    with pytest.raises(SyntaxError):
+        check_python_source(code, 'main.py')
+    with pytest.raises(SyntaxError):
+        validate_batch(ws, CodeResult(summary='Invalid', files=[{'path':'main.py','content':code}]))
+    assert ws.files() == [] and not marker.exists()
+    ws.write('main.py', code)  # Simulate preexisting invalid/user-edited source.
+    with service.sessions() as s:
+        report = ToolRegistry(ws, s, task, {}).inspect()
+    assert any('main.py' in error for error in report['errors'])
+    assert not marker.exists()
+
+
+async def test_duplicate_keyword_gets_bounded_candidate_correction(system):
+    service, worker, _, runner = system
+    task, ws = developer(system)
+    async def generate(role, system, prompt, schema):
+        assert ws.files() == []
+        if schema == CodeResult:
+            return CodeResult(summary='Draft', files=[{'path':'main.py','content':"print('x', end='', end='')\n"}])
+        assert schema == RepairResult and 'keyword argument repeated' in prompt
+        return RepairResult(summary='Remove duplicate keyword', edits=[
+            {'path':'main.py','old_text':"end='', end=''",'new_text':"end=''"}])
+    worker.client.generate = generate
+    await worker.tick()
+    assert ws.read('main.py') == "print('x', end='')\n" and runner.calls == 0
+    assert worker.checkpoints.get(task.id, 'candidate_state')['corrections_used'] == 1
+
+
 def developer(system):
     service, worker, *_ = system
     p = service.create_project('Candidate regression')

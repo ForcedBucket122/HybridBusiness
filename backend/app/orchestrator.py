@@ -11,7 +11,7 @@ from .agents import AGENTS, COMMON
 from .checkpoints import Checkpoints
 from .candidates import validate_candidate
 from .context import ContextBuilder
-from .evidence import qa_report
+from .evidence import qa_report, repair_fingerprint
 from .repairs import materialize, validate_batch
 from .database import (AgentMessage, Approval, Artifact, ChatMessage, MemoryEntry, Project,
                        SystemSetting, Task, TaskRun, now, record, uid)
@@ -191,7 +191,8 @@ class Orchestrator:
                 return {'summary': 'Anulowano.'}
             if reviewed_hashes != ws.hashes():
                 raise ValueError('Pliki zmieniły się podczas przeglądu QA. Nie utworzono zgody.')
-            report = qa_report(static=static, review=review, hashes=ws.hashes())
+            report = qa_report(static=static, review=review, hashes=reviewed_hashes,
+                               files={p: ws.read(p) for p in ws.files()})
             result = {'summary': review.summary, 'review': review.model_dump(), 'static': static, 'qa_report': report}
             self.checkpoints.save(task, 'qa_review', result)
             if report['outcome'] == 'changes_requested':
@@ -202,6 +203,7 @@ class Orchestrator:
                     'execution_directory': str(self.service.workspace / 'runs' / '<approval-id>'),
                     'warning': 'Testy wykonają niezaufany kod z pełnymi uprawnieniami użytkownika. To NIE jest sandbox. Zatwierdź tylko po przeglądzie plików.',
                     'timeout_seconds': 120,
+                    'qa_report': report,
                 })
                 s.add(approval)
                 current = s.get(Task, task.id)
@@ -229,10 +231,21 @@ class Orchestrator:
                 edits = await self.client.generate('developer', COMMON +
                     'Repair the current files using exact old_text/new_text replacements. old_text must occur exactly once. '
                     'To create a missing file only, use empty old_text and the full content as new_text. '
-                    'Fix ErrorSummary and RequiredChanges. Preserve regression tests and working features. '
+                    'Fix verified ErrorSummary and RequiredChanges. Preserve regression tests and working features. '
+                    'Runner failures prove observations, not the correctness of test expectations. '
+                    'Use ProjectGoal and AcceptanceCriteria to distinguish application defects from test defects. '
+                    'Correct invalid test setup or expectations only with a requirements-based explanation in summary; '
+                    'preserve test names, coverage and meaningful assertions. Do not change correct application behavior to satisfy a wrong test. '
+                    'If a reported defect cannot be confirmed or reproduced, return disposition=unconfirmed, edits=[], '
+                    'and explain the evidence in summary. This pauses the repair for review; it does not pass QA. '
                     'Do not rewrite unrelated code. Never claim tests ran.', context, RepairResult)
                 if before != ws.hashes():
                     raise ValueError('Pliki zmieniły się podczas generowania; nie zapisano poprawek.')
+                if edits.disposition == 'unconfirmed':
+                    rejection = {**edits.model_dump(), 'source_hashes': before, 'written': False}
+                    self.checkpoints.save(task, 'repair_unconfirmed', rejection)
+                    with self.sessions.begin() as s:
+                        s.get(Task, task.id).result = {'repair_unconfirmed': rejection}
                 result = materialize(ws, edits)
             else:
                 result = await agent.execute(self.client, context)
@@ -356,7 +369,36 @@ class Orchestrator:
         return committed
 
     def repair(self, task, result, errors):
+        issues = result.get('qa_report', {}).get('issues', [])
+        if not issues or any(i.get('source') not in ('static', 'runner') for i in issues):
+            raise ValueError('Brak zweryfikowanych dowodów do automatycznej naprawy.')
+        ws = self.service.project_workspace(task.project_id)
+        fingerprint = repair_fingerprint({p: ws.read(p) for p in ws.files()}, issues)
+        result = {**result, 'repair_fingerprint': fingerprint}
         self.checkpoints.save(task, 'qa_result', result)
+        repeated = False
+        with self.sessions.begin() as s:
+            pending, seen = list(task.dependencies), set()
+            for _ in range(80):
+                if not pending:
+                    break
+                key = pending.pop()
+                if key in seen:
+                    continue
+                seen.add(key)
+                previous = s.get(Task, key)
+                if previous is None or previous.project_id != task.project_id:
+                    continue
+                prior = previous.result.get('committed_result', previous.result)
+                if previous.agent == 'qa' and prior.get('repair_fingerprint') == fingerprint:
+                    s.get(Task, task.id).result = result
+                    repeated = True
+                    break
+                pending.extend(previous.dependencies)
+            else:
+                raise ValueError('Przekroczono limit przeglądu 80 zależności naprawy.')
+        if repeated:
+            raise ValueError('NO_PROGRESS: te same potwierdzone błędy dla niezmienionego kodu; przerwano cykl napraw.')
         if task.iteration >= self.service.settings().max_iterations:
             with self.sessions.begin() as s:
                 s.get(Task, task.id).result = result
@@ -407,15 +449,26 @@ class Orchestrator:
         return await self.review_tests(task, evidence, approved_hashes)
 
     async def review_tests(self, task, evidence, approved_hashes):
-        if self.service.project_workspace(task.project_id).hashes() != approved_hashes:
+        ws = self.service.project_workspace(task.project_id)
+        if ws.hashes() != approved_hashes:
             raise ValueError('Bieżące pliki nie odpowiadają wykonanym testom. Wynik testów zachowano; potrzebny nowy przegląd.')
         review = await AGENTS['qa'].execute(self.client, self.context(task, True))
-        report = qa_report(review=review, tests=evidence, hashes=approved_hashes)
+        if self.cancelled(task.id):
+            return {'summary': 'Anulowano.', 'tests': evidence}
+        if ws.hashes() != approved_hashes:
+            raise ValueError('Pliki zmieniły się podczas przeglądu wyników. Wymagane nowe testy.')
+        report = qa_report(review=review, tests=evidence, hashes=approved_hashes,
+                           files={p: ws.read(p) for p in ws.files()})
         result = {'summary': review.summary, 'tests': evidence, 'review': review.model_dump(),
                   'tested_hashes': approved_hashes, 'qa_report': report}
         if report['outcome'] == 'changes_requested':
             return self.repair(task, result, [evidence['output'][-10000:]] + [i['message'] for i in report['issues']])
         self.checkpoints.save(task, 'qa_result', result)
+        if report['outcome'] == 'review_required':
+            with self.sessions.begin() as s:
+                s.get(Task, task.id).result = {**result, 'phase': 'post_tests'}
+            raise ValueError('QA_REVIEW_REQUIRED: testy zaliczone, ale QA pozostawił niepotwierdzone hipotezy. '
+                             'Wymagany przegląd; nie zlecono automatycznej naprawy ani wydania.')
         with self.sessions.begin() as s:
             MemoryService(s).remember(task.project_id, 'solution', {'summary': review.summary,
                 'tested_hashes': approved_hashes, 'test_count': evidence['test_count']}, task.id, verified=True)

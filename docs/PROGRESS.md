@@ -2,6 +2,129 @@
 
 Aktualizacja: 2026-11-03 (Europe/Warsaw). Projekt powstał w A:\HybridBusiness.
 
+## 2026-11-03 — deterministyczna bramka QA i nowa próba E2E
+
+**Stan bieżący: poprawki i regresje zakończone; rzeczywisty E2E oczekuje na zgodę
+użytkownika na wykonanie konkretnego kodu. Użytkownik zażądał najpierw analizy
+bezpieczeństwa i polecił nie wykonywać jeszcze testów. Brak wykonanych testów
+tego produktu i ZIP.**
+
+### Diagnoza potwierdzona kodem i zachowanym przebiegiem
+
+- `evidence.qa_report` wcześniej dodawał wszystkie findings/luźne issues modelu do
+  listy błędów. Samo `acceptable=false` wystarczało do `changes_requested`, a
+  Orchestrator wywoływał `repair()` przed utworzeniem zgody na pierwsze testy.
+- `logs/e2e-plain-source-result.json`: QA najpierw zakwestionował
+  `LatestTestResult: null`, później podał identyczne expected/actual dla list_tasks.
+  Żadnej z tych opinii nie potwierdzał runner. Developer nie mógł formalnie odmówić:
+  RepairResult wymagał przynajmniej jednej edycji, a prompt nakazywał poprawianie.
+- Bezpośrednie źródło historycznego NO_PROGRESS to `repairs.validate_batch`:
+  identyczny hash AST plików Python i brak zmian innych plików. Ta ochrona działała
+  prawidłowo; nieprawidłowa była wcześniejsza decyzja o zleceniu naprawy.
+- Istniały deduplikacja wewnątrz raportu i limit iteracji, ale brakowało sprawdzenia
+  dowodów QA oraz rozpoznania tego samego błędu/kodu w poprzednim cyklu napraw.
+- H1–H4 potwierdzono w powyższym zakresie. H5 (JSON utrudnia analizę) i H6
+  (pojemność modelu jako przyczyna) nie zostały dowiedzione. Nie zmieniano formatu
+  źródeł w kontekście, modeli ani temperatury na podstawie tych hipotez.
+
+### Zmiany
+
+- `backend/app/evidence.py`: osobne `issues` (tylko statyczne/runner), `hypotheses`
+  oraz `rejected_findings` z przyczyną odrzucenia. Walidacja expected==actual,
+  istniejącego pliku i zakresu linii, normalnego braku LatestTestResult przed
+  wykonaniem. Model nie może podszyć się pod source=runner/static. Gdy findings
+  istnieją, legacy issues stanowi ich podsumowanie; pełna surowa opinia pozostaje
+  zapisana w model_review. Nie stosuje się strip do porównania expected/actual:
+  różnica białych znaków może być rzeczywistym błędem.
+- `backend/app/orchestrator.py`: automatyczne naprawy tylko dla potwierdzonych
+  błędów. Przed testami hipotezy trafiają do zgody wraz z raportem. Po zaliczonych
+  testach nierozstrzygnięta hipoteza kończy etap błędem QA_REVIEW_REQUIRED,
+  zachowuje wyniki i blokuje Release; jawne retry jest ograniczone i nie wykonuje
+  testów ponownie. Same testy nie unieważniają zasadnych uwag QA.
+- Identyczny zestaw potwierdzonych błędów przy tym samym AST w tej samej gałęzi
+  planu zatrzymuje się z NO_PROGRESS także po restarcie i kosmetycznych zmianach
+  README. Fingerprint jest trwały; przegląd zależności ma limit 80. Zachowano
+  dotychczasowy limit iteracji, ochronę testów, checkpointy i kontrolę własności.
+- `schemas.py`, `repairs.py`, `orchestrator.py`: Developer może zwrócić
+  disposition=unconfirmed, edits=[] i uzasadnienie. Zapisuje się checkpoint
+  repair_unconfirmed z hashami; etap zatrzymuje się bez zmiany plików i bez
+  uznania błędu za naprawiony. Potwierdzony błąd runnera nadal blokuje wydanie.
+- `context.py`, `agents.py`: jawny TestExecution z not_run/stale/passed/failed,
+  przypomnienie o zgodzie i zakaz traktowania braku testów jako porażki.
+  Historyczny wynik z innych hashów pozostaje widoczny jako nieaktualny.
+- Dodatkowo ponowna kontrola hashów po odpowiedzi QA analizującej wykonane testy,
+  aby zmiana plików podczas inferencji nie mogła zakończyć QA sukcesem.
+- `ollama.py`: do checkpointów metryk dodano rzeczywisty load_duration oraz
+  użyte num_ctx i keep_alive. Konfiguracja nadal 8192, keep_alive=0, stream=false,
+  qwen3:4b / qwen2.5-coder:7b. Zero powoduje zwolnienie modelu po odpowiedzi
+  ([dokumentacja Ollama](https://docs.ollama.com/api/chat)). W nowym E2E ładowanie
+  trwało CEO 5,35 s, Developer 10,16 s, QA 5,61 s; całe requesty 12,18 / 23,11 /
+  8,34 s. To koszt wydajności, nie dowód przyczyny błędów. Bez przełączenia na 30B
+  ani zmiany globalnej konfiguracji Ollama; nie pobierano modeli.
+
+### Rzeczywista weryfikacja
+
+- Przed zmianami: **83 passed, 2 skipped**, 17,28 s.
+- Testy celowane QA/flow/recovery/improvements/candidates/Ollama: **74 passed**,
+  23,10 s. Następnie pełny backend: **99 passed, 2 skipped, 0 failed**, 23,67 s.
+  Pominięte: opt-in live oraz tworzenie symlinków bez uprawnień Windows.
+  Pozostało wcześniejsze ostrzeżenie Starlette/httpx; bez instalacji zależności.
+- Dodano `tests/test_qa_evidence.py` (16 przypadków). Odtwarza sprzeczne raporty,
+  brak pliku/linii, podszywanie się pod runner, brak i nieaktualność testów,
+  niepotwierdzoną naprawę, identyczne cykle po odtworzeniu workera, zmianę plików
+  podczas QA oraz blokadę Release przy nierozstrzygniętych hipotezach.
+- Zaufana, jawnie napisana fixture przeszła prawdziwy runner: wykryte odejmowanie
+  zamiast dodawania → naprawa → nowa zgoda/hash → test zaliczony → ZIP.
+  **To test integracyjny z atrapą modelu, nie zaliczenie produktu z Ollama.**
+- Zachowano testy limitu napraw i odtwarzania skutków po restarcie. Ich bodziec
+  zmieniono z gołosłownej opinii modelu na rzeczywisty statyczny brak README
+  (`tests/test_flow.py`, `tests/test_recovery_runner.py`).
+- `npm.cmd run build`: zaliczony. `npm.cmd test`: **4 passed**, 3,9 s w Edge.
+  Frontend bez zmian źródłowych. Pierwsze próby narzędzi frontendowych blokował
+  systemowy dostęp do katalogów tymczasowych; po zatwierdzonym rozszerzeniu
+  uprawnień polecenia przeszły. Stare raporty testów zachowano w
+  `logs/frontend-test-results-before-qa-fix-20261103`.
+- `git diff --check`: bez błędów. Kopia sprzed zmian z manifestem i SQLite:
+  `data/backups/20261103T205631242904Z`. Nie usunięto dawnych projektów/historii.
+
+### Punkt wznowienia rzeczywistego E2E
+
+- Projekt `5685e12b142044d1a8b9c3b0029265bd`, „E2E QA evidence - integer adder”.
+  CEO i Developer COMPLETED, QA WAITING_APPROVAL, Release PENDING. Jedna generacja
+  Developera, bez korekt składni i bez automatycznych napraw z opinii QA.
+- main.py i test_main.py przechodzą ast.parse; inspect_project nie wykazał błędów
+  strukturalnych, znalazł 7 funkcji testowych oraz README. Model QA zgłosił trzy
+  hipotezy dotyczące pokrycia CLI; są zapisane, nie zostały uznane za wynik testów.
+- Ręczny przegląd statyczny wykazał prawdopodobne błędy produktu: testy wywołują
+  main z argumentem, ale definicja go nie przyjmuje; assertLogs użyto do print;
+  brak importu sys w obsłudze wyjątków; oczekiwanie kodu 1 zamiast typowego 2
+  dla błędnych argumentów argparse. To ustalenia z kodu, nie wynik wykonania.
+- Zgoda **7f34be7ce2884d8f8bd3b7d1b9f89e2c**, status PENDING, obejmuje:
+  - main.py: `c2d66c86d111b2a787b28197d3c5584c5a6a052fcabb8a8409ee6b6a63693835`
+  - test_main.py: `1aaf3f50953bd094115315737481448775b91587f1c15186236ab59b2d4da63b`
+  - README.md: `342332abaac1e6f14a32ebadce62a6c3f149bc08bbb102450b371b62960e9731`
+- Polecenie: projektowy Python `-I -B -m unittest discover -s . -p test*.py -v`,
+  limit 120 s, migawka `workspace/runs/<approval-id>`, pełne prawa użytkownika,
+  brak izolacji systemowej. Zapytano użytkownika o tę konkretną zgodę. Bez jego
+  odpowiedzi nie wolno zatwierdzić API, uruchomić ani importować kodu projektu.
+- Trwały stan: `data/qa-e2e-20261103.json`; pełny eksport plików, hashów, zadań,
+  zgody, 9 checkpointów i metryk: `logs/qa-e2e-20261103-evidence.json`.
+  Panel działa na http://127.0.0.1:8000. Nowy projekt ma 0 wykonanych testów i 0 ZIP.
+- Po pytaniu o zgodę użytkownik zażądał najpierw audytu bezpieczeństwa. Wykonano
+  wyłącznie odczyt, SHA256 i ast.parse, bez importowania/wykonywania tych plików.
+  Ponownie potwierdzono dokładnie 3 pliki oraz zgodność wszystkich hashów.
+  main.py importuje tylko argparse, test_main.py unittest i lokalny main.
+  Brak jawnego odczytu/zapisu/usuwania plików, uruchamiania procesów, sieci,
+  eval/exec/dynamicznych importów. Operacje obejmują arytmetykę, analizę argumentów,
+  stdout/stderr, wyjątki i asercje. Zaufany runner uruchomi jeden proces Python
+  oraz zapisze log w workspace/runs/<approval-id>-test-output.log (obok migawki);
+  nie jest mechanizmem izolacji. Raport: `logs/qa-e2e-20261103-security.json`.
+  API potwierdziło PENDING, brak wyników testów i brak katalogu wykonania zgody.
+- **Następny krok:** po jawnej zgodzie na powyższy identyfikator i hashe użyć
+  istniejącego API zatwierdzeń. W razie błędów zweryfikować wynik runnera i
+  automatyczne naprawy; każda zmieniona wersja wymaga nowej zgody. Nie ogłaszać
+  sukcesu E2E przed zaliczonymi testami właściwych hashów i rzeczywistym ZIP.
+
 ## 2026-11-03 — ograniczona próba bez JSON dla pojedynczego pliku
 
 - Wykorzystano poprzednie wyniki; nie powtórzono serii temperatur ani porównań JSON.

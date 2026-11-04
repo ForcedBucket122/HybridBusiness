@@ -1,11 +1,13 @@
 """Validate proposed edits without importing generated code."""
 import ast
 import difflib
-from .evidence import semantic_hash, test_names
+from .evidence import check_python_source, semantic_hash, test_names
 from .schemas import CodeResult
 
 
 def materialize(ws, repair):
+    if repair.disposition == 'unconfirmed':
+        raise ValueError('REPAIR_UNCONFIRMED: ' + repair.summary)
     contents = {}
     for edit in repair.edits:
         target = ws.path(edit.path)
@@ -38,7 +40,7 @@ def validate_batch(ws, result, repair=False):
         raise ValueError('Przekroczono limit rozmiaru projektu.')
     for f in result.files:
         if f.path.endswith('.py'):
-            ast.parse(f.content, filename=f.path)
+            check_python_source(f.content, f.path)
             if f.path in before:
                 try:
                     removed = test_names(before[f.path]) - test_names(f.content)

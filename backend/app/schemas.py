@@ -1,7 +1,7 @@
 from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ROLES = ('ceo', 'developer', 'qa', 'research', 'marketing', 'finance', 'release')
 
@@ -115,7 +115,14 @@ class FileEdit(StrictModel):
 
 class RepairResult(StrictModel):
     summary: str = Field(min_length=1, max_length=2000)
-    edits: list[FileEdit] = Field(min_length=1, max_length=20)
+    disposition: Literal['repaired', 'unconfirmed'] = 'repaired'
+    edits: list[FileEdit] = Field(max_length=20)
+
+    @model_validator(mode='after')
+    def consistent_disposition(self):
+        if (self.disposition == 'repaired') != bool(self.edits):
+            raise ValueError('repaired requires edits; unconfirmed requires empty edits and an explanation in summary.')
+        return self
 
 
 class QAIssue(StrictModel):

@@ -103,6 +103,8 @@ class OllamaClient:
                     self.metrics.append({'role': role, 'model': model, 'attempt': attempt + 1,
                         'seconds': round(time.monotonic() - started, 3), 'estimated_input_tokens': estimated_input,
                         'output_budget': output_budget, 'prompt_eval_count': payload.get('prompt_eval_count'),
+                        'num_ctx': cfg.context_size, 'keep_alive': 0,
+                        'load_duration': payload.get('load_duration'),
                         'eval_count': payload.get('eval_count'), 'done_reason': payload.get('done_reason')})
                     self.metrics = self.metrics[-20:]
                     if payload.get('done_reason') == 'length':

@@ -3,6 +3,7 @@ import difflib
 from dataclasses import dataclass
 
 from .database import record
+from .evidence import check_python_source
 from .schemas import FileArgs, QueryArgs
 
 
@@ -74,7 +75,7 @@ class ToolRegistry:
         for path in files:
             if path.endswith('.py'):
                 try:
-                    tree = ast.parse(self.workspace.read(path), filename=path)
+                    tree = check_python_source(self.workspace.read(path), path)
                     if not path.split('/')[-1].startswith('test'):
                         entrypoint |= any(isinstance(node, ast.Compare) and isinstance(node.left, ast.Name)
                                           and node.left.id == '__name__' and any(isinstance(c, ast.Constant) and c.value == '__main__' for c in node.comparators)

@@ -43,6 +43,9 @@ class ContextBuilder:
             memories = MemoryService(s).relevant(task.project_id, task.description)
             rejected = s.get(TaskCheckpoint, (task.id, 'rejected_proposal'))
         hashes = ws.hashes()
+        current_tests = latest is not None and tested.result.get('tested_hashes') == hashes
+        test_state = ('not_run' if latest is None else 'stale' if not current_tests
+                      else 'passed' if latest.get('passed') else 'failed')
         cfg = self.service.settings()
         files = [{'path': path, 'sha256': hashes[path], 'content': ws.read(path)} for path in ws.files()] if include_files else []
         payload = {
@@ -50,6 +53,10 @@ class ContextBuilder:
             'CurrentTask': {'id': task.id, 'title': task.title, 'description': task.description, 'iteration': task.iteration},
             'AcceptanceCriteria': qa.description if qa else task.description,
             'RelevantFiles': files,
+            'TestExecution': {'state': test_state,
+                'approval_required': not current_tests,
+                'explanation': 'Only passed/failed applies to current files. not_run/stale is not a failure; '
+                               'execution requires a separate user approval bound to current file hashes.'},
             'LatestTestResult': None if not latest else {**latest, 'tested_hashes': tested.result.get('tested_hashes', {}),
                 'applies_to_current_files': tested.result.get('tested_hashes') == hashes},
             # A developer needs the preceding review. A new QA review must not treat old
@@ -72,4 +79,4 @@ class ContextBuilder:
             raise ValueError(f'Kontekst wymaga {len(text.encode("utf-8"))} bajtów, limit {budget}. Nie ucięto wymaganych plików/błędów; podziel zadanie.')
         return text, {'bytes': len(text.encode('utf-8')), 'estimated_tokens': ceil(len(text.encode('utf-8')) / 3),
                       'estimate_only': True, 'files': list(hashes), 'source_hashes': hashes,
-                      'latest_test_state': 'not_run' if not latest else 'passed' if latest.get('passed') else 'failed'}
+                      'latest_test_state': test_state}
