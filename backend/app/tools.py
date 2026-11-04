@@ -72,6 +72,7 @@ class ToolRegistry:
 
     def inspect(self):
         errors, files, tests, entrypoint = [], self.workspace.files(), [], False
+        implementation_incomplete = False
         for path in files:
             if path.endswith('.py'):
                 try:
@@ -85,12 +86,16 @@ class ToolRegistry:
                                      if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith('test'))
                 except (SyntaxError, ValueError) as exc:
                     errors.append(f'{path}: {exc}')
+                    if not path.split('/')[-1].startswith('test'):
+                        implementation_incomplete = True
         if not any(f.endswith('.py') and not f.split('/')[-1].startswith('test') for f in files):
             errors.append('Brak implementacji Python. MVP runner obsługuje Python unittest.')
         if not tests:
             errors.append('Brak testów unittest test_*.py.')
         if not any(f.lower() == 'readme.md' for f in files):
             errors.append('Brak README.md.')
-        if any(word in self.requirements.lower() for word in ('konsol', 'console', 'command-line')) and not entrypoint:
+        cli_state = 'present' if entrypoint else 'unknown' if implementation_incomplete else 'missing'
+        if any(word in self.requirements.lower() for word in ('konsol', 'console', 'command-line')) and cli_state == 'missing':
             errors.append('Zlecono aplikację konsolową, ale brak punktu wejścia if __name__ == "__main__" w kodzie aplikacji.')
-        return {'kind': 'static_only', 'errors': errors, 'test_functions': tests, 'files': files}
+        return {'kind': 'static_only', 'errors': errors, 'test_functions': tests, 'files': files,
+                'cli_entrypoint': cli_state}

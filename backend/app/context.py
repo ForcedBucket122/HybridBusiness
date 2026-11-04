@@ -1,8 +1,112 @@
 import json
+import ast
+from copy import deepcopy
 from math import ceil
 from sqlalchemy import select
 from .database import ChatMessage, Project, Task, TaskCheckpoint
 from .memory import MemoryService
+
+
+def select_context(payload, budget):
+    """Fit whole evidence/source units; never slice requirements, code or tracebacks."""
+    data = deepcopy(payload)
+    notes = []
+    compact = False
+    original_bytes = len(json.dumps(data, ensure_ascii=False, indent=2).encode('utf-8'))
+
+    def render():
+        if notes:
+            data['ContextSelection'] = {'notes': notes}
+        return json.dumps(data, ensure_ascii=False, **(
+            {'separators': (',', ':')} if compact else {'indent': 2}))
+
+    # Legacy repair descriptions embed the same runner output already stored below.
+    # Only replace an exact, substantial evidence block, including its old tail form.
+    output = (data.get('LatestTestResult') or {}).get('output', '')
+    duplicate = output[-10000:]
+    if len(duplicate) >= 128:
+        reference = '[Full runner output and tracebacks: LatestTestResult.output]'
+        for owner, key, label in [(data.get('CurrentTask', {}), 'description', 'CurrentTask.description'),
+                                  (data, 'RequiredChanges', 'RequiredChanges')]:
+            if duplicate in owner.get(key, ''):
+                owner[key] = owner[key].replace(duplicate, reference)
+                notes.append(label + ': deduplicated exact runner output; retained in LatestTestResult.output')
+
+    text = render()
+    if len(text.encode('utf-8')) > budget:
+        compact = True
+        text = render()
+    if len(text.encode('utf-8')) > budget:
+        # User preferences/decisions remain protected; historical solutions are optional.
+        memories = data.get('RelevantMemory', [])
+        optional = [m for m in memories if m.get('kind') == 'solution']
+        if optional:
+            data['RelevantMemory'] = [m for m in memories if m.get('kind') != 'solution']
+            notes.append('RelevantMemory: omitted historical solutions ' +
+                         json.dumps([m.get('id') for m in optional]))
+            text = render()
+    if len(text.encode('utf-8')) > budget and data.get('PreviousAttempts'):
+        # Keep IDs, status, iteration and no-progress signals; file names are secondary.
+        for attempt in data['PreviousAttempts']:
+            if 'changed_files' in attempt:
+                attempt['changed_file_count'] = len(attempt.pop('changed_files'))
+        notes.append('PreviousAttempts: retained outcomes; summarized changed-file lists as counts')
+        text = render()
+    if len(text.encode('utf-8')) > budget:
+        # Full Python sources remain mandatory. Only unreferenced prose can be reduced.
+        evidence = json.dumps([data.get('ProjectGoal'), data.get('ErrorSummary'), data.get('RejectedProposal'),
+                               data.get('CurrentTask'), data.get('RequiredChanges'),
+                               data.get('LatestTestResult'),
+                               [f.get('content', '') for f in data.get('RelevantFiles', [])
+                                if f['path'].endswith('.py')]], ensure_ascii=False).casefold()
+        documents = sorted((f for f in data.get('RelevantFiles', [])
+                            if f['path'].lower().endswith(('.md', '.rst'))
+                            and f['path'].casefold() not in evidence),
+                           key=lambda f: len(f.get('content', '').encode('utf-8')), reverse=True)
+        for document in documents:
+            content = document.pop('content', '')
+            document['context_summary'] = {'kind': 'documentation', 'content_bytes': len(content.encode('utf-8')),
+                                           'line_count': len(content.splitlines()), 'body_omitted': True}
+            notes.append('RelevantFiles: documentation body omitted for ' + document['path'] + '; path/hash retained')
+            text = render()
+            if len(text.encode('utf-8')) <= budget:
+                break
+    if (len(text.encode('utf-8')) > budget and data.get('TaskAgent') == 'qa'
+            and data.get('LatestTestResult')):
+        # Once tests have run, the immutable source hashes and complete runner
+        # output are stronger evidence than repeating entire test modules to QA.
+        # Keep product Python and represent test modules by explicit method names.
+        for source in data.get('RelevantFiles', []):
+            name = source.get('path', '').rsplit('/', 1)[-1].lower()
+            if not (name.startswith('test') and name.endswith('.py') or name == 'acceptance_cases.py'):
+                continue
+            content = source.get('content')
+            if content is None:
+                continue
+            try:
+                tree = ast.parse(content, filename=source['path'])
+                methods = sorted({node.name for node in ast.walk(tree)
+                                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                                  and node.name.startswith('test_')})
+            except (SyntaxError, ValueError):
+                methods = []
+            source.pop('content')
+            source['context_summary'] = {
+                'kind': 'executed_test_source',
+                'content_bytes': len(content.encode('utf-8')),
+                'test_methods': methods,
+                'body_omitted': True,
+            }
+            notes.append('RelevantFiles: executed test source summarized; complete runner evidence and source hash retained for ' + source['path'])
+            text = render()
+            if len(text.encode('utf-8')) <= budget:
+                break
+    size = len(text.encode('utf-8'))
+    if size > budget:
+        sizes = {key: len(json.dumps(value, ensure_ascii=False).encode('utf-8')) for key, value in data.items()}
+        raise ValueError(f'Kontekst wymaga {size} bajtów, limit {budget}. Zachowano wymagania, kod i dowody; '
+                         'podziel zadanie. Rozmiary pól: ' + json.dumps(sizes, ensure_ascii=False))
+    return text, {'original_bytes': original_bytes, 'bytes': size, 'budget_bytes': budget, 'reductions': notes}
 
 
 class ContextBuilder:
@@ -51,6 +155,7 @@ class ContextBuilder:
         payload = {
             'ProjectGoal': goal.description if goal else message.content if message else project.description,
             'CurrentTask': {'id': task.id, 'title': task.title, 'description': task.description, 'iteration': task.iteration},
+            'TaskAgent': task.agent,
             'AcceptanceCriteria': qa.description if qa else task.description,
             'RelevantFiles': files,
             'TestExecution': {'state': test_state,
@@ -69,14 +174,8 @@ class ContextBuilder:
             'RelevantMemory': memories,
             'RejectedProposal': rejected.payload if rejected else None,
         }
-        # No silent truncation of errors, requirements or source. Optional memory can be omitted.
-        text = json.dumps(payload, ensure_ascii=False, indent=2)
         budget = max(1000, (cfg.context_size - 1800) * 3)
-        if len(text.encode('utf-8')) > budget:
-            payload['RelevantMemory'] = []
-            text = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
-        if len(text.encode('utf-8')) > budget:
-            raise ValueError(f'Kontekst wymaga {len(text.encode("utf-8"))} bajtów, limit {budget}. Nie ucięto wymaganych plików/błędów; podziel zadanie.')
+        text, selection = select_context(payload, budget)
         return text, {'bytes': len(text.encode('utf-8')), 'estimated_tokens': ceil(len(text.encode('utf-8')) / 3),
                       'estimate_only': True, 'files': list(hashes), 'source_hashes': hashes,
-                      'latest_test_state': test_state}
+                      'latest_test_state': test_state, 'selection': selection}

@@ -1,0 +1,13 @@
+﻿.git/
+.venv/
+venv/
+node_modules/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+*.log
+*.gguf
+*.safetensors

@@ -7,7 +7,7 @@ import zipfile
 
 from sqlalchemy import func, select
 
-from .agents import AGENTS, COMMON
+from .agents import AGENTS, COMMON, REQUIREMENTS_PRIORITY
 from .checkpoints import Checkpoints
 from .candidates import validate_candidate
 from .context import ContextBuilder
@@ -228,7 +228,7 @@ class Orchestrator:
                     raise ValueError('Pliki zmieniły się od przygotowania kandydata; wznowienie zablokowane.')
                 result = CodeResult.model_validate(candidate['code'])
             elif task.iteration:
-                edits = await self.client.generate('developer', COMMON +
+                edits = await self.client.generate('developer', COMMON + REQUIREMENTS_PRIORITY +
                     'Repair the current files using exact old_text/new_text replacements. old_text must occur exactly once. '
                     'To create a missing file only, use empty old_text and the full content as new_text. '
                     'Fix verified ErrorSummary and RequiredChanges. Preserve regression tests and working features. '

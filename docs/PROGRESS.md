@@ -1,6 +1,272 @@
 # Postęp LocalAICompany
 
-Aktualizacja: 2026-11-03 (Europe/Warsaw). Projekt powstał w A:\HybridBusiness.
+Aktualizacja: 2026-11-04 (Europe/Warsaw). Projekt powstał w A:\HybridBusiness.
+
+## 2026-11-04 — naprawiony budżet kontekstu, ten sam E2E 2 zakończony Release
+
+**Bloker kontekstu naprawiony bez zwiększania limitów. Projekt
+`e445de53b00c45a48732137b4d402d28` ma COMPLETED. Lokalny Developer sam
+poprawił produkt; po nowej zgodzie wykonano 7 testów: 7 PASS, 0 FAIL,
+0 ERROR, 0 SKIP. QA i Release zakończone, ZIP utworzony i zweryfikowany.**
+
+### Potwierdzona przyczyna i minimalna selekcja
+
+- Odtworzono zachowany przypadek naprawy `8c5f202465914808a09b0f14aacff597`.
+  Surowe wyjście runnera (3112 bajtów) było przekazywane trzy razy: jako
+  LatestTestResult.output oraz wewnątrz CurrentTask.description i RequiredChanges.
+  Pola w zwartej reprezentacji zajmowały odpowiednio 3795, 3733 i 3642 bajty;
+  RelevantFiles 7531 bajtów, ProjectGoal 1469, ErrorSummary 1793. To powtórzenia
+  dowodów powodowały przekroczenie, a nie nadmierny rozmiar samego produktu.
+- Zmiana kodu silnika ograniczona do `backend/app/context.py`: select_context
+  zastępuje dokładne, długie kopie wyjścia runnera jawnym odwołaniem do jednego
+  pełnego LatestTestResult.output. Obsługuje również historyczną kopię ostatnich
+  10000 znaków w opisie naprawy; pełny początek/koniec i wszystkie tracebacki
+  pozostają w źródłowym wyniku. Krótkie słowa z stdout nie są usuwane z instrukcji.
+- W razie dalszego braku miejsca: zwarta serializacja JSON, pominięcie historycznych
+  rozwiązań z pamięci, skrót list zmienionych plików w historii do liczników oraz
+  metadane zamiast treści nieistotnej dokumentacji .md/.rst. Preferencje i decyzje,
+  wymagania, pełny Python, błędy, wynik walidacji i RejectedProposal są chronione.
+  Dokumentacja wskazana w wymaganiach, błędach, zadaniu, dowodach lub kodzie nie
+  jest pomijana. Pliki wejściowe .txt nie są uznawane za zbędną dokumentację.
+- Każda redukcja jest jawna w ContextSelection i metadanych checkpointu context;
+  ścieżki i hashe pominiętej dokumentacji pozostają. Dane trwałe są niezmienne:
+  selektor pracuje na kopii. Gdy chroniony rdzeń nadal nie mieści się w budżecie,
+  zgłasza błąd z rozmiarami pól; nie obcina końca tekstu ani dowodów.
+- Rzeczywisty przypadek: odrzucone wcześniej **22907 bajtów** w zwartej postaci
+  (23684 w czytelnej) → **17501 bajtów** po deduplikacji, przy niezmienionym
+  limicie **19176** i num_ctx=8192. W tym przypadku wystarczyły wyłącznie dwa
+  odwołania zamiast kopii; żadnego pliku, wymogu ani tracebacku nie pominięto.
+  Porównanie zapisano w `logs/autonomy-e2e2-context-before-20261104.json`
+  i `logs/autonomy-e2e2-context-after-20261104.json`.
+
+### Regresje i weryfikacja silnika
+
+- `tests/fixtures/expense_context_overflow.json`: trwały, samodzielny zapis
+  oryginalnego kontekstu 22907 bajtów; źródła produktu są danymi testowymi,
+  nie są importowane ani wykonywane przez te regresje.
+- `tests/test_context_budget.py`: 10 przypadków obejmujących zachowanie pełnych
+  wymagań, kodu i czterech tracebacków, jawne skróty danych drugorzędnych,
+  ochronę dokumentacji przywołanej przez wymagania/błędy/kod, ochronę plików
+  wejściowych, odrzucenie zbyt dużych dowodów, krótki stdout oraz historyczny
+  ogon logu. Regresja integracyjna dochodzi przez rzeczywistą ścieżkę naprawy
+  do klienta Ollama z MockTransport, sprawdza num_ctx=8192 i dodatni budżet
+  odpowiedzi; nie wykonuje produktu ani wywołania prawdziwego modelu.
+- Końcowe testy celowane: **57 PASS, 0 FAIL, 0 SKIP**, 13,11 s.
+  Pełny backend: **119 PASS, 0 FAIL, 2 SKIP**, 25,24 s. Pominięte: opt-in live
+  i symlinki bez uprawnień Windows. Pozostało wcześniejsze ostrzeżenie Starlette/httpx.
+  Wcześniejsze 55/117 zaliczono przed dodaniem dwóch końcowych regresji ochrony
+  plików wejściowych i referencji w kodzie; powtórzenie sprawdziło te nowe zabezpieczenia.
+  Nie zmieniano compile(), konfiguracji modeli, limitów ani systemu zatwierdzania.
+
+### Kontynuacja istniejącego E2E, bez ręcznych poprawek produktu
+
+- Po testach przeładowano backend i wznowiono to samo zadanie Developer 1
+  normalnym retry. Próba 1 nadal dokumentuje błąd budżetu; próba 2 dotarła do
+  lokalnego qwen2.5-coder:7b i zakończyła się COMPLETED. Nie resetowano liczników
+  i nie dodawano ręcznej propozycji ani dodatkowych wskazówek ratunkowych.
+- Model dodał import json w test_main.py, naprawiając NameError. Dodał też
+  zbędny drugi import json w main.py; pozostawiono tę niegroźną nadmiarowość,
+  aby zachować autorstwo produktu po stronie lokalnego agenta. Kompilacja i QA
+  statyczne przeszły; siedem nazw testów zachowano.
+- Nowa wersja została wykonana dopiero po jawnej zgodzie użytkownika
+  **`6e4d92121f4547dca43bcb979366c782`**, obecnie CONSUMED, dla SHA256:
+  - main.py: `e4d843cc2641d8c6f0dc1ed3ac0a127e937cfaeaeebe2b8334b4cde062045619`
+  - test_main.py: `091bf5f9a1b78771913ea7f8f784ec3d4f0aedf861c83ec900e8cc3aa3308d5e`
+  - README.md: `80bba18468f2ac07355c0b31aa21a15d0961d71fa71d10ad85f5c83690a78200`
+- Runner: **7 PASS, exit=0**, 0,42 s (unittest: 0,021 s), pełne wyjście
+  zapisane w `workspace/runs/6e4d92121f4547dca43bcb979366c782-test-output.log`.
+  QA 1 `014de6022c2b42728c2a043114a6004d`: COMPLETED, outcome=verified.
+  Release `52f507dc47a344d1ae9d333e256985a3`: COMPLETED.
+- ZIP: `workspace/artifacts/6ff64f6d571d409a8d19334a83b763d7.zip`, SHA256
+  **`e3246186985bd8e84f62f56e8faa8c14bac29f5350f7a98776bd0395ebd894ad`**.
+  Zweryfikowano CRC, hashe archiwum i plików, ich zgodność ze zgodą i QA oraz
+  identyczność wyniku siedmiu testów w VERIFICATION.json. Żadnego kodu ani
+  notatek produktu nie poprawiano ręcznie.
+- Bilans tego samego projektu: 1 początkowa generacja, 0 korekt składni,
+  1 cykl napraw, 2 uruchomienia zadania naprawy (pierwsze bez LLM),
+  **1 rzeczywiste żądanie modelu naprawy**, 2 zgody użytkownika,
+  **0 ręcznych poprawek produktu**, 1 interwencja w infrastrukturę kontekstu.
+  Zachowano 9 TaskRun i 22 checkpointy. Pierwotny eksperyment bez zmiany backendu
+  pozostał zatrzymany; ukończenie nastąpiło po osobno zleconej naprawie infrastruktury.
+- Pełny eksport po wznowieniu: `logs/autonomy-e2e2-context-fix-result-20261104.json`;
+  zgoda, poprawki i kontekst mają osobne snapshoty context-fix-preexecution i approval.
+  Porównanie z bazą eksperymentu: w backendzie zmieniono tylko context.py;
+  ustawienia i pliki .ignore pozostały identyczne. Backend końcowej wersji działa
+  w MANUAL; restart nie ponowił wykonania produktu.
+
+### Granice wyniku
+
+Siedem wygenerowanych testów przeszło, ale nie jest to niezależna, wyczerpująca
+walidacja wymagań. Testy nie sprawdzają jawnie wszystkich wariantów (m.in. kwoty
+zero/niecałkowite, kategorię z samych spacji, puste list/total, kolejne dodania
+przez main ani identyczność zawartości uszkodzonego pliku po odrzuceniu).
+Szersze deklaracje pokrycia w wygenerowanym RELEASE.md nie są dodatkowym dowodem.
+Naprawa konkretnego NameError przez lokalnego agenta i usunięcie blokera kontekstu
+zostały faktycznie potwierdzone. Dalszą pracę nad pokryciem należy traktować jako
+osobny etap; nowe wersje produktu nadal wymagają nowej zgody.
+
+## 2026-11-04 — niezależny E2E 2: pomiar autonomii zatrzymany na limicie kontekstu
+
+**Projekt `e445de53b00c45a48732137b4d402d28`, rejestr wydatków CLI:
+FAILED. Rzeczywisty wynik produktu: 3 PASS, 0 FAIL, 4 ERROR, 0 SKIP.
+Release PENDING, ZIP nie powstał. Produktu ani backendu nie poprawiano ręcznie.**
+
+- Nowy projekt jest niezależny od poprzedniego sumatora. Zakres: dodawanie wydatków
+  z dodatnią całkowitą kwotą w groszach i kategorią, lista w kolejności dodawania,
+  suma, zapis JSON pod jawną ścieżką --file, walidacja wejścia i ochrona uszkodzonego
+  JSON przed nadpisaniem. Testy mają używać TemporaryDirectory i main(argv).
+- Bazowy stan, pełna specyfikacja oraz hashe backendu i plików .ignore:
+  `data/autonomy-e2e2-20261104.json` i
+  `logs/autonomy-e2e2-20261104T153030Z-baseline.json`.
+  Modele bez zmian: CEO/QA qwen3:4b, Developer qwen2.5-coder:7b;
+  kontekst 8192, temperatura 0,2, standardowe limity prób/napraw, MANUAL.
+  W tym trybie tylko uruchamiano gotowe, uprawnione etapy istniejącym API;
+  nie dodawano instrukcji ratunkowych, checkpointów z ręcznym kodem ani nowych zadań.
+- CEO: 1 próba, plan z jednym Developerem. Developer 0: 1 próba generowania,
+  0 korekt składni, poprawna kompilacja main.py i test_main.py oraz README.
+  QA przed testami zaakceptował przegląd. Testy mimo to zawierały brak importu json.
+  Obserwację z przeglądu bezpieczeństwa zapisano, ale nie przekazano jej agentom
+  jako podpowiedzi i nie zmieniono wygenerowanego kodu.
+- Przegląd bezpieczeństwa: brak sieci i subprocess; aplikacja otwiera wyłącznie
+  przekazany file_path, a wszystkie wywołania main w testach podają ścieżkę z
+  TemporaryDirectory. Przed wykonaniem uzyskano konkretną zgodę użytkownika:
+  `8a728291aaa44cf3b565fad8d2517e70`, obecnie CONSUMED. Obejmuje SHA256:
+  - main.py: `7c800e88fa773f28ab3e04f399911f06d1a5b3074e582801be2060c4164453e8`
+  - test_main.py: `8e828f7bf158348950d081ca635c6ce54d3778dd38a438202be4cd0a997918f8`
+  - README.md: `80bba18468f2ac07355c0b31aa21a15d0961d71fa71d10ad85f5c83690a78200`
+- Runner wykonał tylko zatwierdzoną migawkę: projektowy Python
+  `-I -B -m unittest discover -s . -p test*.py -v`, bez izolacji systemowej.
+  Jedno wykonanie, exit=1. PASS: test_invalid_amount, test_invalid_category,
+  test_malformed_json. ERROR: test_add_expense, test_get_total, test_list_expenses,
+  test_missing_file. Wszystkie cztery tracebacki wskazują
+  `NameError: name 'json' is not defined` w test_main.py.
+  Błąd dotyczy kodu testów; nie dowodzi niesprawności wszystkich odpowiadających
+  im funkcji aplikacji. Dalsze asercje i kompletność wymagań nie zostały potwierdzone.
+- Po wykonaniu QA otrzymał wynik runnera i skierował do naprawy potwierdzone błędy.
+  Developer 1 `8c5f202465914808a09b0f14aacff597` uruchomiono raz. Zatrzymał się
+  **przed wywołaniem modelu**: `Kontekst wymaga 22907 bajtów, limit 19176`.
+  Istniejący mechanizm nie obciął wymaganych plików/błędów. To rzeczywisty bloker
+  infrastruktury kontekstu, nie NO_PROGRESS ani nieudana odpowiedź modelu naprawy.
+- Zgodnie z warunkami pomiaru nie ponawiano tej samej próby, nie zwiększano
+  kontekstu ani limitów, nie zmieniano backendu, nie skracano promptu i nie
+  dodawano ręcznej poprawki importu. Nie można z tego wyniku wywnioskować, czy
+  Developer sam naprawiłby błąd: żądanie naprawy nie dotarło do modelu.
+
+| Mierzona wielkość | Rzeczywisty wynik |
+| --- | --- |
+| Próby początkowego generowania | 1 |
+| Automatyczne korekty składni | 0 |
+| Cykle napraw zlecone przez QA | 1 |
+| Uruchomienia zadania naprawy / zapytania modelu naprawy | 1 / 0 |
+| Łączne wywołania LLM | 4: CEO 1, Developer 1, QA 2 |
+| Łączne TaskRun | 5, w tym dwie fazy tego samego QA |
+| Wykonania testów produktu | 1 |
+| Interwencje człowieka | 1 obowiązkowa zgoda; 0 poprawek i 0 wskazówek ratunkowych |
+| Ręczne zmiany produktu / backendu | 0 / 0 |
+| ZIP | 0; Release PENDING |
+
+- Stan kolejki: CEO i Developer 0 COMPLETED, QA 0 REVIEWED,
+  Developer 1 FAILED (attempts=1), QA 1 `014de6022c2b42728c2a043114a6004d`
+  PENDING, Release `52f507dc47a344d1ae9d333e256985a3` PENDING.
+  Żadnego statusu nie zmieniano na sukces ręcznie i nie resetowano liczników.
+- Pełny raport, każdy wynik i traceback, pliki, zadania, checkpointy, próby,
+  metryki i zgoda: `logs/autonomy-e2e2-20261104T153030Z-result.json`.
+  Surowe wyjście: `workspace/runs/8a728291aaa44cf3b565fad8d2517e70-test-output.log`.
+  Snapshot sprzed wykonania zachowuje również pierwszą opinię QA i jej metryki.
+- Porównanie SHA256 potwierdziło identyczny backend przed/po eksperymencie,
+  identyczne ustawienia, nienaruszone pliki .ignore oraz produkt zgodny z hashami
+  zużytej zgody. Nie uruchamiano ponownie testów silnika ani wcześniejszego E2E.
+- **Następny krok poza tym eksperymentem:** osobno zbadać i poprawić budowę
+  kontekstu napraw, z regresją dla tego zapisanego przypadku. Bieżący pomiar
+  pozostaje niezaliczony; nie odblokowywano go ręczną ingerencją.
+
+## 2026-11-04 — istniejący E2E zakończony wydaniem ZIP
+
+**Projekt `5685e12b142044d1a8b9c3b0029265bd` ma COMPLETED.
+Developer 2, QA 2 i Release zakończone. Zatwierdzona poprawiona wersja:
+7 PASS, 0 FAIL, 0 ERROR, 0 SKIP; rzeczywisty ZIP zweryfikowany.**
+
+### Wznowienie i autorstwo korekty
+
+- Zachowano istniejący projekt, plan, próby, zgody i historię. Nie tworzono nowego E2E.
+  Przy wznowieniu pliki nie zawierały opisanej wcześniej reguły pierwszeństwa wymagań,
+  stanu CLI unknown ani tests/test_review_contract.py. Przywrócono te same konieczne
+  poprawki i sprawdzono tylko ich 6 regresji: **6 PASS**, 2,17 s, jedno wcześniejsze
+  ostrzeżenie Starlette/httpx. Z tego powodu krótka weryfikacja została powtórzona;
+  nie powtarzano pełnego zestawu backendu ani wcześniejszego audytu. Compile bez zmian.
+- Developer 2 `f79e56edfbe2436cb0bfa94583f8d337`, próba 1: qwen2.5-coder:7b
+  zwrócił edycję z niejednoznacznym old_text w test_main.py. Materialize odrzucił
+  całą propozycję przed zapisem; to nie był NO_PROGRESS. Pliki pozostały bez zmian.
+  Dowód: `logs/qa-e2e-developer2-resume-20261104.json`.
+- Następnie Codex przygotował **jawną korektę inżynierską**, a nie przypisał jej
+  lokalnemu modelowi: zachowano add, main(argv=None), parser.parse_args(argv),
+  usunięto wadliwy wrapper z powtórzonym file i niezdefiniowanym sys. Zachowano
+  siedem nazw testów; stdout/stderr przechwytują StringIO/redirect_stdout/stderr,
+  a błędne wejście wymaga niezerowego kodu i komunikatu zamiast wymyślonego kodu 1.
+  Test prawidłowego CLI obejmuje dodatnie, ujemne liczby i zero; oba błędne operandy
+  mają sprawdzane błędy, brak wyniku w stdout oraz niezerowy SystemExit.
+- Propozycję sprawdzono statycznie przez validate_batch(repair=True), ochronę nazw
+  testów i kompilację, bez importowania produktu. Zapisano human_reviewed_proposal
+  i zwykły proposal z aktualnymi hashami. Standardowe retry (próba 2) odtworzyło
+  propozycję istniejącą ścieżką checkpointów: normalna kontrola plików, kompilacja,
+  zapis i aktualizacja własności przez silnik. Nie resetowano limitów ani nie
+  ustawiano statusu sukcesu ręcznie. Developer 2 ma COMPLETED; nieudana próba jest
+  nadal w TaskRun. `logs/qa-e2e-engineering-proposal-20261104.json`.
+
+### QA, zgoda i rzeczywiste testy
+
+- QA 2 `a41545e68107402c803005480f70d6cb` przed testami ponownie powtórzył stare
+  zarzuty mimo nowych plików. Deterministyczny raport zachował je jako hipotezy,
+  bez tworzenia kolejnych napraw. Statyka: errors=[], cli_entrypoint=present,
+  siedem testów. Stan WAITING_APPROVAL był prawidłowy; model nadal może halucynować.
+- Użytkownik jawnie zatwierdził nową zgodę
+  `b20b5623bc6c4d63a35dc8a63f8167bc`, wykonanie bez izolacji, dla SHA256:
+  - main.py: `e7ac71f36c71ae2e5c5e4e285a86e04bec87c55e92a7a058a38e8b26a90a8c34`
+  - test_main.py: `0dbddc053570112f95362f0a87f8f230c377f0c4523e659db0fb75094ed40684`
+  - README.md: `342332abaac1e6f14a32ebadce62a6c3f149bc08bbb102450b371b62960e9731`
+- Po ponownym porównaniu hashów zgodę przekazano przez istniejące API. Runner
+  wykonał migawkę poleceniem projektowego Pythona:
+  `-I -B -m unittest discover -s . -p test*.py -v`. **7 PASS, exit=0**, 0,21 s
+  runnera (unittest: 0,002 s). Każda z siedmiu funkcji ma ok; brak tracebacków.
+  Zgoda ma CONSUMED. Testy CLI wywołują main(argv) w procesie unittest; nie
+  uruchamiano dodatkowego procesu CLI poza zakresem zatwierdzonego polecenia.
+- QA otrzymał rzeczywisty wynik z hashami, wycofał zarzuty i zaakceptował pliki:
+  COMPLETED, qa_report.outcome=verified, issues=[], hypotheses=[]. Nie utworzono
+  Developer 3 ani nowej pętli NO_PROGRESS. To potwierdza działanie bramki dowodów
+  w tym przebiegu, nie ogólną niezawodność ocen modelu.
+- Każdy wynik i pełne wyjście: `logs/qa-e2e-corrected-test-results-20261104.json`
+  oraz `workspace/runs/b20b5623bc6c4d63a35dc8a63f8167bc-test-output.log`.
+  Poprzedni wynik produktu (3 PASS, 4 ERROR) i jego tracebacki nadal znajdują się
+  w `logs/qa-e2e-first-test-results-20261103.json` i logu poprzedniej zgody.
+
+### Release i weryfikacja artefaktu
+
+- Pierwszy Release utworzył ZIP `4d4087f8e275408cb33088997964af26` z poprawnym
+  manifestem, ale sprzecznym zdaniem w notatkach o niewykonanych testach. Artefakt
+  zachowano w historii. Dodano jeden standardowy etap Release do istniejącego
+  projektu, zależny od ukończonego QA 2, z poleceniem korekty samych notatek.
+  Nie zmieniano kodu produktu ani nie powtarzano testów.
+- Końcowy Release `90000550c6564771ad13c680b861d0c6`: COMPLETED. Artefakt
+  **`c77fa162c6114793a8707af14f757aa0`**, plik
+  `workspace/artifacts/c77fa162c6114793a8707af14f757aa0.zip`, SHA256
+  **`7058ece46229bfdf13260a0a6282a38990a8ed4ddcb84f1dfb76f34e1491a7ef`**.
+- Sprawdzono CRC ZIP, dokładną listę sześciu elementów, SHA256 całego archiwum,
+  hashe trzech plików produktu względem zgody, QA i VERIFICATION.json oraz
+  identyczność dowodu siedmiu testów w manifeście. Skorygowane RELEASE.md jest
+  zgodne z wynikiem. ZIP zawiera produkt, VERIFICATION.json, RELEASE.md i CHANGELOG.md.
+- Pełny eksport projektu, wszystkich zadań, prób i checkpointów, zgód, manifestu
+  oraz notatek: `logs/qa-e2e-release-20261104-evidence.json` (32 checkpointy,
+  12 TaskRun). Zachowano również pierwotny ZIP z wadliwymi notatkami.
+- Backend pozostaje na http://127.0.0.1:8000 w MANUAL, bez aktywnego zadania tego
+  projektu. Plików `.ignore` i `.ignore.backup-*` nie zmieniano. Nie pobierano modeli,
+  nie używano chmury i nie naruszano mechanizmu zgód.
+
+**Ten E2E ma poprawny produkt, wykonane testy i ZIP, z udokumentowaną korektą
+inżynierską. Nie jest dowodem w pełni autonomicznej naprawy przez lokalny model.**
+Następny ewentualny rozwój: niezawodność propozycji exact-match i ograniczenie
+powtarzania przez QA nieaktualnych obserwacji; bez potrzeby ponawiania tego E2E.
+
+Poniższe wpisy są historyczne; stan końcowy tego projektu opisano powyżej.
 
 ## 2026-11-03 — deterministyczna bramka QA i nowa próba E2E
 
@@ -397,3 +663,147 @@ z nowego E2E. Sprawdzić celowaną korektę składni bez resetowania liczników 
 zadań. Następnie ponowić kontrolowany E2E; wykonanie nowego kodu wymaga konkretnej nowej
 zgody związanej z hashami. Szczegóły kolejnego etapu i granic w IMPROVEMENTS.md.
 Nie oznaczać wszystkich 18 kryteriów MVP jako zweryfikowanych.
+
+## 2026-11-04 — niezależne testy akceptacyjne rejestru wydatków (bez wykonania)
+
+- Dodano acceptance/expense_log/test_acceptance.py i README.md poza produktem.
+  Oczekiwania porównano z request w data/autonomy-e2e2-20261104.json.
+- 10 metod: 8 obowiązkowych (ochrona bajtów uszkodzonego JSON przy add/list/total,
+  zero/ujemne/niecałkowite kwoty, puste i białe kategorie, wymagane --file) oraz
+  2 opcjonalne odpornościowe (błędny schemat JSON, niepełne add i zachowanie
+  danych po odrzuceniu). Dodatkowe kontrakty nie są obowiązkowymi kryteriami Release.
+- Walidacja statyczna ast.parse + compile drzewa: PASS; potwierdzono 10 metod,
+  2 advisory, brak bezpośredniego importu main przy zbieraniu testów. Niczego
+  nie wykonano: ani nowych testów, ani produktu, ani zestawu backendu.
+- SHA256 test_acceptance.py:
+  fd18da5123eeae70f21d22aa2af2d3e72f480909f8f57d55e04f220ff735e6da.
+- Hashe main.py, test_main.py i README.md produktu oraz istniejącego Release ZIP
+  nadal odpowiadają poprzedniemu zatwierdzonemu wydaniu. Nie zmieniano backendu.
+- Wykonanie wymaga nowej jednorazowej zgody związanej z hashami migawki produktu
+  i niezależnego testu. Guard środowiskowy nie jest zgodą; README opisuje warunki
+  runnera, także konieczność adaptera, jeśli runner usuwa zmienne środowiskowe.
+
+## 2026-11-04 — przygotowane wykonanie niezależnej akceptacji, zgoda PENDING
+
+- Sprawdzono oryginalny request, 8 wymaganych metod i 2 dodatkowe. Statyczne
+  ast.parse/compile przeszły. Oryginalny produkt i istniejący ZIP zachowały hashe.
+- Runner zachowano bez zmian: stała komenda, czyste środowisko, limit 120 s,
+  Windows Job Object, kontrola hashów przed startem i jednorazowa zgoda.
+  Nie obsługuje osobnej listy plików zewnętrznych ani dodatkowych zmiennych.
+- Dodano acceptance/expense_log/approved_adapter.py: w zatwierdzonym procesie
+  ładuje niezależne testy i wymusza pominięcie 2 advisory. Nie udziela zgody.
+- tests/test_acceptance_adapter.py: 3 PASS, 0 FAIL/ERROR/SKIP (0,29 s), wyłącznie
+  własne zaufane atrapy. Pierwsza próba: 2 PASS/1 ERROR przy tworzeniu systemowego
+  katalogu tymczasowego; ponowienie w nowym katalogu repo potwierdziło poprawność.
+  Nie powtarzano pełnego backendu; produktu nie importowano ani nie wykonywano.
+- Osobny projekt b5e63a23e87543519ca2d89fbdaff4d0; QA
+  f2476b1bd502455381d9a723f06434cf: WAITING_APPROVAL. Zarejestrowano inżynierski
+  checkpoint acceptance_preflight i zgodę host_tests
+  79077d28f33a4d9b8bf5e21883867b40: PENDING. Nie podszywano się pod ocenę modelu.
+- Kopia źródłowa zgody zawiera tylko main.py, acceptance_cases.py i adapter
+  test_acceptance.py. Testy otrzymały UTF-8 bez BOM/LF, bez zmian asercji.
+  Pełne hashe, komenda, specyfikacja i pochodzenie:
+  logs/expense-independent-acceptance-prepared-20261104.json.
+- Wyniki produktu: brak wykonania (PASS/FAIL/ERROR/SKIP: nieustalone).
+  Po nowej zgodzie istniejący engine utworzy i sprawdzi migawkę, wykona testy,
+  utrwali pełny output/checkpoint i przekaże błędy QA do procesu napraw w osobnej
+  kopii. Produkt źródłowy i historyczny ZIP nie będą nadpisywane.
+
+## 2026-11-04 — niezależna akceptacja wykonana: 7 PASS / 1 FAIL / 0 ERROR / 2 SKIP
+
+- Użytkownik jawnie zatwierdził wersję bez izolacji; zgodę
+  79077d28f33a4d9b8bf5e21883867b40 przekazano przez istniejące API.
+  Status końcowy CONSUMED. Jedno wykonanie produktu, runner 0,32 s, exit=1.
+- Osiem metod obowiązkowych: 7 PASS / 1 FAIL / 0 ERROR. Dwie opcjonalne: SKIP.
+  Unittest raportuje failures=2, bo jedna metoda test_blank_category_rejected
+  ma dwa niezaliczone podprzypadki: trzy spacje oraz tabulator. Nie są to dwa
+  różne testy metodowe. Oba przypadki zwracają kod 0 zamiast błędu.
+- Potwierdzono rzeczywiste naruszenie pierwotnego wymagania odrzucania blank
+  categories. Ochrona bajtów uszkodzonego JSON dla add/list/total, wymagane
+  --file i odrzucanie zero/ujemnych/niecałkowitych kwot przeszły.
+- Pełne tracebacki i wyniki każdej metody:
+  workspace/runs/79077d28f33a4d9b8bf5e21883867b40-test-output.log oraz
+  logs/expense-independent-acceptance-result-20261104.json.
+- Faza post_tests początkowo zatrzymała się przed LLM: 20123 > 19176 bajtów.
+  Usunięto wyłącznie dokładną kopię specyfikacji z opisu zadania; pełne wymagania
+  pozostały w ProjectGoal, poprzedni opis zachowano w checkpoincie
+  acceptance_description_deduplicated. Żadnego kodu, dowodu ani limitu nie zmieniono.
+  Standardowy retry wznowił tylko interpretację post_tests, bez ponowienia testów.
+- QA f2476b1bd502455381d9a723f06434cf: REVIEWED, changes_requested.
+  Istniejący proces napraw utworzył Developer 8c8c89413be94fce8cf8eb2b19265914
+  i QA 4d7efc7e1c734aa3ad8b8f1aad5b17a7: oba PENDING, nieuruchomione w MANUAL.
+  Developer otrzymał pełne wyjście runnera i oba tracebacki; oryginalne wymagania
+  pozostają w projekcie. Nie wykonano ręcznych napraw ani zmian testów dla PASS.
+- Potwierdzono identyczność hashów zatwierdzonej kopii i wykonanej migawki.
+  Produkt źródłowy i poprzedni ZIP zachowały hashe. Backend bez zmian.
+  Zmodyfikowany produkt nadal wymaga nowej jednorazowej zgody przed wykonaniem.
+ 
+## 2026-11-04 — Developer poprawił whitespace; nowa zgoda QA oczekuje
+
+- Odrzucono propozycję Developera 1, która osłabiała asercję testu akceptacyjnego.
+  Zgodę overwrite 013a49be699646d9aaa46bf14b01100f ustawiono REJECTED;
+  pełen checkpoint kandydatury i historia zadania zachowane. Utworzono Developer 2
+  z pełnymi runner dowodami i zakazem modyfikacji testów.
+- Pierwsze podejście Developer 2 nie dotarło do LLM z powodu powtórzonego logu
+  (20713 > 19176 bajtów). Opis skrócono; pierwotny zapis zachowano w checkpointcie.
+  Lokalny qwen2.5-coder:7b zmienił wyłącznie warunek w main.py na
+  not args.category.strip(). Static compile przeszło. Oryginalne testy akceptacji,
+  test_main.py i README mają niezmienione hashe.
+- QA 2 błędnie zgłosił brak test_main.py/README w wąskiej kopii. Zatrzymano zadania
+  naprawy utworzone na podstawie tego false positive. Do kopii akceptacyjnej dodano
+  niezmienione pliki z oryginalnego produktu; nowe QA obejmuje pięć plików.
+- Kontekst QA ponad budżet 21308 bajtów wymagał, żeby po testach zachować pełny
+  produkt i runner output, a testowe moduły streścić listami metod z hashami.
+  Dodano jeden warunkowy mechanizm backend/app/context.py i regresję w
+  tests/test_context_budget.py. Celowany test: 1 PASS (0,04 s); poprzednie próby
+  ujawniły błąd fixture, następnie poprawiono fixture przed zieloną weryfikacją.
+  Pełny backend nie powtarzany. Kontrolowany restart załadował tę zmianę.
+- QA 3 statycznie zaakceptował składnię i przygotował zgodę
+  0decfc0fb6374740a1f2d6ebf1107f5c: PENDING. Jego modelowy opis błędu jest
+  sprzeczny z wcześniejszym runner dowodem i kodem (strip() odrzuca białe znaki);
+  niezależne wykonanie pozostaje rozstrzygającym dowodem. Migawka zawiera:
+  README.md 80bba18468f2ac07355c0b31aa21a15d0961d71fa71d10ad85f5c83690a78200,
+  acceptance_cases.py ad2e2fa93bc9905fd2433df770a50ca87054532c4f666c6f79fe27bbb633c3fb,
+  main.py 3ee672b721782a0f2bf37dbd713a09db13dbbdce3b7619896ff745eb7fc5f25d,
+  test_acceptance.py 954af2a7c0dd176fd47008882955adf71a62dbdeeac6c242cebb7c3b40a90051,
+  test_main.py 091bf5f9a1b78771913ea7f8f784ec3d4f0aedf861c83ec900e8cc3aa3308d5e.
+  Komenda i pełne zatwierdzenie zapisane w
+  logs/expense-fix-preexecution-20261104.json. Produktu jeszcze nie wykonano.
+ 
+## 2026-11-04 — po nowej zgodzie produktowe 7 PASS; acceptance guard przerwał niezależną suite
+
+- Zgoda 0decfc0fb6374740a1f2d6ebf1107f5c CONSUMED; zatwierdzona migawka miała
+  pięć sprawdzonych hashy. Runner wykonał poprawiony produkt jeden raz.
+- test_main.py: 7 PASS. Niezależny zestaw nie wykonał metod: setUpClass zgłosił
+  ERROR, bo zewnętrzny guard w acceptance_cases.py nadal wymaga SHA256
+  pierwotnego main.py (e4d843...), podczas gdy zatwierdzony fix ma hash 3ee672...
+  To blokada guardu testowego, nie wynik funkcjonalnych asercji. Liczby runnera:
+  PASS 7, FAIL 0, ERROR 1, SKIP 0, exit 1; runner wykrył 7 metod, bo klasyczny
+  błąd setUpClass poprzedza uruchomienie metod acceptance.
+- Zapisano pełne wyjście i QA/approval state w logs/expense-fix-run-result-20261104.json
+  i workspace/runs/0decfc0fb6374740a1f2d6ebf1107f5c-test-output.log.
+  Zgoda jest zużyta; nie ponawiano testów.
+- QA post_tests nie zakończył interpretacji: model zwrócił błąd braku miejsca
+  dla promptu wraz ze schematem. Produkt źródłowy i historyczny ZIP bez zmian.
+  Release PENDING; nie utworzono artefaktu nowej wersji.
+- Kontynuacja wymaga zgody na aktualizację wyłącznie hash guardu niezależnych testów
+  do nowej zatwierdzonej wersji, bez zmian ich asercji. Po takiej zmianie wymagane
+  będą statyczna kontrola i nowa zgoda hash-bound. Bez modyfikacji niezależnych
+  plików próba ponownego wykonania pozostanie deterministycznie zablokowana.
+
+## 2026-11-04 — autoryzowana aktualizacja wyłącznie hash guardu
+
+- Użytkownik zezwolił na zmianę samego hash guardu w niezależnym zestawie.
+  Zmieniono jedną stałą w acceptance/expense_log/test_acceptance.py oraz jej
+  kopii acceptance_cases.py w projekcie. Poprzednie treści po odwróceniu tej
+  stałej odtwarzają dokładnie wcześniejsze SHA256 fd18da5123eeae70f21d22aa2af2d3e72f480909f8f57d55e04f220ff735e6da
+  a wcześniejsza wartość projektu odpowiada SHA256 z
+  logs/expense-independent-acceptance-result-20261104.json.
+- Nowy guard wskazuje poprawiony main.py SHA256
+  3ee672b721782a0f2bf37dbd713a09db13dbbdce3b7619896ff745eb7fc5f25d. Asercje
+  pozostały identyczne. Nowe hashe plików guardu: source
+  abd70cb1b0ddcee34e79a661e54c5720cbb19f5332eea0ec4a0c9ae241c4b439;
+  project copy c8e97c018bb95b7d01ab808a6080ca237be1c534cfbff24183805c42b5fe6447.
+- Nie utworzono jeszcze świeżej zgody ani nie powtórzono wykonania. Terminal
+  przestał uruchamiać procesy (helper_unknown_error: setup refresh had errors),
+  więc kolejny krok przez istniejący QA/approval runner jest obecnie zablokowany.
